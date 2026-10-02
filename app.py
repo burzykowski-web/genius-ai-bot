@@ -200,7 +200,7 @@ def process_intrastat_dataframe(text_data):
     clean_csv = text_data.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
     valid_lines = [line for line in clean_csv.split('\n') if line.count(';') >= 5 or "Nr_Faktury" in line or "Faktura" in line]
     if not valid_lines:
-        return pd.DataFrame(columns=["Kontrahent", "NumerDokumentu", "DataWystawienia", "NIP", "Wartosc", "DataRozliczenia", "Waluta"])
+        return pd.DataFrame(columns=["Kontrahent", "NumerDokumentu", "DataWystawienia", "NIP", "Wartosc", "Waluta"])
     try:
         df = pd.read_csv(StringIO("\n".join(valid_lines)), sep=";", on_bad_lines='skip')
         for col in ["Ilosc_Sztuk", "Masa_Netto_KG", "Wartosc_PLN"]:
@@ -212,7 +212,6 @@ def process_intrastat_dataframe(text_data):
         if "Kod_CN" in df.columns:
             df["Kod_CN"] = df["Kod_CN"].astype(str).str.replace(r"\D", "", regex=True).str[:8]
 
-        # Mapowanie kolumn bezpośrednio pod Huzar WinSAD
         mapped_data = []
         for _, r in df.iterrows():
             mapped_data.append({
@@ -246,7 +245,7 @@ def process_intrastat_dataframe(text_data):
         return pd.DataFrame()
 
 def generate_huzarfaktury_xml(df):
-    root = ET.Element("Faktury")
+    root = ET.Element("TFakturyHS")
     for _, row in df.iterrows():
         faktura = ET.SubElement(root, "Faktura")
         for col in df.columns:
@@ -695,7 +694,7 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
                     elif ext == "png":
                         contents.append(types.Part.from_bytes(data=f_bytes, mime_type="application/png"))
 
-                with st.spinner("Odczytywanie dokumentów i przygotowanie struktury dla Huzara..."):
+                with st.spinner("Odczytywanie dokumentów i przygotowanie struktury TFakturyHS dla Huzara..."):
                     res_intra = safe_generate_content(client, selected_model, contents)
                     df_processed = process_intrastat_dataframe(res_intra.text)
                     st.session_state.df_intra_result = df_processed
@@ -715,7 +714,7 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
         )
         xml_huzar_bytes = generate_huzarfaktury_xml(df_edited_intra)
         st.download_button(
-            label="📥 Pobierz Plik XML pod Huzar WinSAD",
+            label="📥 Pobierz Plik XML (TFakturyHS) pod Huzar WinSAD",
             data=xml_huzar_bytes,
             file_name=f"FakturyHS_Intrastat_PLN.xml",
             mime="application/xml",
@@ -867,7 +866,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
 
         selected_tab = st.radio(
             "Wybierz Etap Analizy",
-            ["📋 1. Kontrola Formalna i Odprawa Chińska", "🧩 2. Zbijanie Pozycji", "🏷️ 3. Taryfikacja & Weryfikacja Agenta"],
+            ["📋 1. Kontrola Formalna i Odprawa Chińska", "🧩 2. Zbijanie Pozycji", "🏷️️ 3. Taryfikacja & Weryfikacja Agenta"],
             horizontal=True
         )
 
