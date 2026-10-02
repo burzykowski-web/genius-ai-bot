@@ -198,46 +198,55 @@ def update_hs_database_from_records(records, image_file=None):
 
 def process_intrastat_dataframe(text_data):
     clean_csv = text_data.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
-    valid_lines = [line for line in clean_csv.split('\n') if line.count(';') >= 5 or "Kod_CN" in line or "Kod" in line]
+    valid_lines = [line for line in clean_csv.split('\n') if line.count(';') >= 5 or "Nr_Faktury" in line or "Faktura" in line]
     if not valid_lines:
-        return pd.DataFrame(columns=["Sprzedawca_Nazwa", "Kod_CN", "Opis_Towaru", "Ilosc_Sztuk", "Masa_Netto_KG", "Wartosc_PLN"])
+        return pd.DataFrame(columns=["Kontrahent", "NumerDokumentu", "DataWystawienia", "NIP", "Wartosc", "DataRozliczenia", "Waluta"])
     try:
         df = pd.read_csv(StringIO("\n".join(valid_lines)), sep=";", on_bad_lines='skip')
         for col in ["Ilosc_Sztuk", "Masa_Netto_KG", "Wartosc_PLN"]:
             if col in df.columns:
                 df[col] = df[col].astype(str).str.replace(",", ".").str.extract(r"(\d+\.?\d*)")[0].astype(float).fillna(0)
         
-        df["Nr_Faktury"] = df["Nr_Faktury"].astype(str).str.strip()
-        df["Kod_CN"] = df["Kod_CN"].astype(str).str.replace(r"\D", "", regex=True).str[:8]
-
-        # GRUPOWANIE DOKŁADNIE PO JEDNYM WIERSZU NA FAKTURĘ (łączenie kodów CN i sumowanie wartości)
         if "Nr_Faktury" in df.columns:
-            df = df.groupby(["Nr_Faktury"], as_index=False).agg({
-                "Sprzedawca_Nazwa": "first",
-                "Sprzedawca_NIP": "first",
-                "Sprzedawca_Kraj": "first",
-                "Sprzedawca_Ulica": "first",
-                "Sprzedawca_Kod": "first",
-                "Sprzedawca_Miasto": "first",
-                "Data_Faktury": "first",
-                "Nabywca_Nazwa": "first",
-                "Nabywca_NIP": "first",
-                "Nabywca_Kraj": "first",
-                "Nabywca_Ulica": "first",
-                "Nabywca_Kod": "first",
-                "Nabywca_Miasto": "first",
+            df["Nr_Faktury"] = df["Nr_Faktury"].astype(str).str.strip()
+        if "Kod_CN" in df.columns:
+            df["Kod_CN"] = df["Kod_CN"].astype(str).str.replace(r"\D", "", regex=True).str[:8]
+
+        # Mapowanie kolumn bezpośrednio pod Huzar WinSAD
+        mapped_data = []
+        for _, r in df.iterrows():
+            mapped_data.append({
+                "Kontrahent": str(r.get("Sprzedawca_Nazwa", r.get("Kontrahent", ""))),
+                "NumerDokumentu": str(r.get("Nr_Faktury", r.get("NumerDokumentu", ""))),
+                "DataWystawienia": str(r.get("Data_Faktury", r.get("DataWystawienia", ""))),
+                "NIP": str(r.get("Sprzedawca_NIP", r.get("NIP", ""))),
+                "Wartosc": float(r.get("Wartosc_PLN", r.get("Wartosc", 0))),
+                "Waluta": "PLN",
+                "Kod_CN": str(r.get("Kod_CN", "")),
+                "Opis_Towaru": str(r.get("Opis_Towaru", "")),
+                "Ilosc_Sztuk": float(r.get("Ilosc_Sztuk", 0)),
+                "Masa_Netto_KG": float(r.get("Masa_Netto_KG", 0))
+            })
+        
+        df_final = pd.DataFrame(mapped_data)
+        if "NumerDokumentu" in df_final.columns:
+            df_final = df_final.groupby(["NumerDokumentu"], as_index=False).agg({
+                "Kontrahent": "first",
+                "DataWystawienia": "first",
+                "NIP": "first",
+                "Wartosc": "sum",
+                "Waluta": "first",
                 "Kod_CN": lambda x: ", ".join(sorted(set(str(v) for v in x if pd.notna(v) and str(v).strip() != ''))),
                 "Opis_Towaru": lambda x: " | ".join(sorted(set(str(v) for v in x if pd.notna(v) and str(v).strip() != ''))),
                 "Ilosc_Sztuk": "sum",
-                "Masa_Netto_KG": "sum",
-                "Wartosc_PLN": "sum"
+                "Masa_Netto_KG": "sum"
             })
-        return df
+        return df_final
     except Exception:
         return pd.DataFrame()
 
 def generate_huzarfaktury_xml(df):
-    root = ET.Element("FakturyHS")
+    root = ET.Element("Faktury")
     for _, row in df.iterrows():
         faktura = ET.SubElement(root, "Faktura")
         for col in df.columns:
@@ -667,7 +676,7 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
                 client = genai.Client(api_key=api_key)
                 prompt_intra = (
                     "Jesteś precyzyjnym systemem OCR do faktur handlowych dla Intrastat.\n"
-                    "ZASADA BEZWZGLĘDNA: Przeczytaj faktury wgrane przez użytkownika. Wyciągnij unikalne numery faktur bez powielania całych dokumentów.\n"
+                    "ZASADA BEZWZGLĘDNA: Odczytaj dokładnie numery faktur, kontrahentów, daty, NIP-y, wartości oraz kody CN.\n"
                     "Zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) i kropką jako separatorem dziesiętnym w pierwszej linii:\n"
                     "Sprzedawca_Nazwa;Sprzedawca_NIP;Sprzedawca_Kraj;Sprzedawca_Ulica;Sprzedawca_Kod;Sprzedawca_Miasto;Nr_Faktury;Data_Faktury;Nabywca_Nazwa;Nabywca_NIP;Nabywca_Kraj;Nabywca_Ulica;Nabywca_Kod;Nabywca_Miasto;Kod_CN;Opis_Towaru;Ilosc_Sztuk;Masa_Netto_KG;Wartosc_PLN"
                 )
@@ -686,11 +695,11 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
                     elif ext == "png":
                         contents.append(types.Part.from_bytes(data=f_bytes, mime_type="application/png"))
 
-                with st.spinner("Odczytywanie dokumentów i agregacja do jednej pozycji na fakturę..."):
+                with st.spinner("Odczytywanie dokumentów i przygotowanie struktury dla Huzara..."):
                     res_intra = safe_generate_content(client, selected_model, contents)
                     df_processed = process_intrastat_dataframe(res_intra.text)
                     st.session_state.df_intra_result = df_processed
-                    st.success(f"✅ Pomyślnie przetworzono dokumenty (dokładnie {len(df_processed)} unikalnych faktur w tabeli)!")
+                    st.success(f"✅ Pomyślnie przetworzono dokumenty (liczba faktur: {len(df_processed)})!")
 
             except Exception as e:
                 st.error(f"Błąd przetwarzania: {str(e)}")
@@ -706,7 +715,7 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
         )
         xml_huzar_bytes = generate_huzarfaktury_xml(df_edited_intra)
         st.download_button(
-            label="📥 Pobierz Plik XML (FakturyHS w PLN) pod Huzar WinSAD",
+            label="📥 Pobierz Plik XML pod Huzar WinSAD",
             data=xml_huzar_bytes,
             file_name=f"FakturyHS_Intrastat_PLN.xml",
             mime="application/xml",
@@ -1023,7 +1032,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                         st.markdown("### 🤖 3A. Propozycje AI i Dopasowania z Wizualnej Bazy")
                         st.dataframe(df_t3, use_container_width=True, hide_index=True)
                         st.markdown("---")
-                        st.markdown("### 👨‍‍💼 3B. Weryfikacja & Akceptacja Agenta Celnego")
+                        st.markdown("### 👨‍💼 3B. Weryfikacja & Akceptacja Agenta Celnego")
                         st.info("💡 **Wskazówka:** System sprawdza 3 parametry zgodności (`Nazwa + Skład + Kod CN`) z Twoją Bazą Wizualną. Możesz edytować dowolne pole w tabeli poniżej.")
 
                         if "df_editor" not in proj or not proj["hs_approved"]:
