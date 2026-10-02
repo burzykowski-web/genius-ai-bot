@@ -207,13 +207,12 @@ def process_intrastat_dataframe(text_data):
             if col in df.columns:
                 df[col] = df[col].astype(str).str.replace(",", ".").str.extract(r"(\d+\.?\d*)")[0].astype(float).fillna(0)
         
-        # Oczyszczanie i ujednolicenie numerów faktur oraz kodów CN
         df["Nr_Faktury"] = df["Nr_Faktury"].astype(str).str.strip()
         df["Kod_CN"] = df["Kod_CN"].astype(str).str.replace(r"\D", "", regex=True).str[:8]
 
-        # Rygorystyczne grupowanie: unikalna faktura + unikalny kod CN (sumujemy ilości, masy i wartości)
-        if "Nr_Faktury" in df.columns and "Kod_CN" in df.columns:
-            df = df.groupby(["Nr_Faktury", "Kod_CN"], as_index=False).agg({
+        # GRUPOWANIE DOKŁADNIE PO JEDNYM WIERSZU NA FAKTURĘ (łączenie kodów CN i sumowanie wartości)
+        if "Nr_Faktury" in df.columns:
+            df = df.groupby(["Nr_Faktury"], as_index=False).agg({
                 "Sprzedawca_Nazwa": "first",
                 "Sprzedawca_NIP": "first",
                 "Sprzedawca_Kraj": "first",
@@ -227,6 +226,7 @@ def process_intrastat_dataframe(text_data):
                 "Nabywca_Ulica": "first",
                 "Nabywca_Kod": "first",
                 "Nabywca_Miasto": "first",
+                "Kod_CN": lambda x: ", ".join(sorted(set(str(v) for v in x if pd.notna(v) and str(v).strip() != ''))),
                 "Opis_Towaru": lambda x: " | ".join(sorted(set(str(v) for v in x if pd.notna(v) and str(v).strip() != ''))),
                 "Ilosc_Sztuk": "sum",
                 "Masa_Netto_KG": "sum",
@@ -667,8 +667,7 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
                 client = genai.Client(api_key=api_key)
                 prompt_intra = (
                     "Jesteś precyzyjnym systemem OCR do faktur handlowych dla Intrastat.\n"
-                    "ZASADA BEZWZGLĘDNA: Przeczytaj faktury wgrane przez użytkownika. Wyciągnij każdą pozycję towarową z każdej faktury bez pomijania żadnej.\n"
-                    "Dla każdej pozycji podaj dokładny numer faktury, dane sprzedawcy/nabywcy, kod CN, ilość sztuk, masę netto oraz wartość w PLN.\n"
+                    "ZASADA BEZWZGLĘDNA: Przeczytaj faktury wgrane przez użytkownika. Wyciągnij unikalne numery faktur bez powielania całych dokumentów.\n"
                     "Zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) i kropką jako separatorem dziesiętnym w pierwszej linii:\n"
                     "Sprzedawca_Nazwa;Sprzedawca_NIP;Sprzedawca_Kraj;Sprzedawca_Ulica;Sprzedawca_Kod;Sprzedawca_Miasto;Nr_Faktury;Data_Faktury;Nabywca_Nazwa;Nabywca_NIP;Nabywca_Kraj;Nabywca_Ulica;Nabywca_Kod;Nabywca_Miasto;Kod_CN;Opis_Towaru;Ilosc_Sztuk;Masa_Netto_KG;Wartosc_PLN"
                 )
@@ -687,11 +686,11 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
                     elif ext == "png":
                         contents.append(types.Part.from_bytes(data=f_bytes, mime_type="application/png"))
 
-                with st.spinner("Odczytywanie dokumentów i agregacja pozycji..."):
+                with st.spinner("Odczytywanie dokumentów i agregacja do jednej pozycji na fakturę..."):
                     res_intra = safe_generate_content(client, selected_model, contents)
                     df_processed = process_intrastat_dataframe(res_intra.text)
                     st.session_state.df_intra_result = df_processed
-                    st.success(f"✅ Pomyślnie przetworzono dokumenty (liczba wierszy w tabeli: {len(df_processed)})!")
+                    st.success(f"✅ Pomyślnie przetworzono dokumenty (dokładnie {len(df_processed)} unikalnych faktur w tabeli)!")
 
             except Exception as e:
                 st.error(f"Błąd przetwarzania: {str(e)}")
@@ -1024,7 +1023,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                         st.markdown("### 🤖 3A. Propozycje AI i Dopasowania z Wizualnej Bazy")
                         st.dataframe(df_t3, use_container_width=True, hide_index=True)
                         st.markdown("---")
-                        st.markdown("### 👨‍💼 3B. Weryfikacja & Akceptacja Agenta Celnego")
+                        st.markdown("### 👨‍‍💼 3B. Weryfikacja & Akceptacja Agenta Celnego")
                         st.info("💡 **Wskazówka:** System sprawdza 3 parametry zgodności (`Nazwa + Skład + Kod CN`) z Twoją Bazą Wizualną. Możesz edytować dowolne pole w tabeli poniżej.")
 
                         if "df_editor" not in proj or not proj["hs_approved"]:
@@ -1058,6 +1057,6 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                             out_final_excel = BytesIO()
                             with pd.ExcelWriter(out_final_excel, engine='openpyxl') as writer:
                                 df_approved.to_excel(writer, index=False, sheet_name='HS_CODE_APPROVED')
-                            st.download_button("🏛️️ Pobierz Zgodę Celną Excel (.xlsx)", data=out_final_excel.getvalue(), file_name=f"HS_APPROVED_{cur_no}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                            st.download_button("🏛️ Pobierz Zgodę Celną Excel (.xlsx)", data=out_final_excel.getvalue(), file_name=f"HS_APPROVED_{cur_no}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
                     except Exception as e:
                         st.error(f"Błąd parsowania taryfikacji: {str(e)}")
