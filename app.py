@@ -196,6 +196,32 @@ def update_hs_database_from_records(records, image_file=None):
         save_hs_database(db)
     return updated_count
 
+def process_intrastat_dataframe(text_data):
+    clean_csv = text_data.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
+    valid_lines = [line for line in clean_csv.split('\n') if line.count(';') >= 5 or "Kod_CN" in line or "Kod" in line]
+    if not valid_lines:
+        return pd.DataFrame(columns=["Sprzedawca_Nazwa", "Kod_CN", "Opis_Towaru", "Ilosc_Sztuk", "Masa_Netto_KG", "Wartosc_PLN"])
+    try:
+        df = pd.read_csv(StringIO("\n".join(valid_lines)), sep=";", on_bad_lines='skip')
+        for col in ["Ilosc_Sztuk", "Masa_Netto_KG", "Wartosc_PLN"]:
+            if col in df.columns:
+                df[col] = df[col].astype(str).str.replace(",", ".").str.extract(r"(\d+\.?\d*)")[0].astype(float).fillna(0)
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+def generate_huzarfaktury_xml(df):
+    root = ET.Element("FakturyHS")
+    for _, row in df.iterrows():
+        faktura = ET.SubElement(root, "Faktura")
+        for col in df.columns:
+            val = str(row[col]) if pd.notna(row[col]) else ""
+            child = ET.SubElement(faktura, col)
+            child.text = val
+    rough_string = ET.tostring(root, 'utf-8')
+    reparsed = minidom.parseString(rough_string)
+    return reparsed.toprettyxml(indent="  ", encoding="utf-8")
+
 def process_stage_2_dataframe(out2_text):
     clean_csv = out2_text.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
     valid_lines = []
@@ -587,7 +613,7 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
 
     if st.button("⚡ Przetwarzaj Faktury i Generuj XML dla Huzara", type="primary", use_container_width=True):
         if not uploaded_intra_docs:
-            st.warning("⚠️️ Wgraj przynajmniej jeden dokument lub plik ZIP!")
+            st.warning("⚠️ Wgraj przynajmniej jeden dokument lub plik ZIP!")
         elif not api_key:
             st.error("Wpisz klucz API Gemini w panelu bocznym.")
         else:
@@ -806,7 +832,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
 
         selected_tab = st.radio(
             "Wybierz Etap Analizy",
-            ["📋 1. Kontrola Formalna i Odprawa Chińska", "🧩 2. Zbijanie Pozycji", "🏷️ 3. Taryfikacja & Weryfikacja Agenta"],
+            ["📋 1. Kontrola Formalna i Odprawa Chińska", "🧩 2. Zbijanie Pozycji", "🏷️️ 3. Taryfikacja & Weryfikacja Agenta"],
             horizontal=True
         )
 
@@ -1005,6 +1031,6 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                             out_final_excel = BytesIO()
                             with pd.ExcelWriter(out_final_excel, engine='openpyxl') as writer:
                                 df_approved.to_excel(writer, index=False, sheet_name='HS_CODE_APPROVED')
-                            st.download_button("🏛️️ Pobierz Zgodę Celną Excel (.xlsx)", data=out_final_excel.getvalue(), file_name=f"HS_APPROVED_{cur_no}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                            st.download_button("🏛️ Pobierz Zgodę Celną Excel (.xlsx)", data=out_final_excel.getvalue(), file_name=f"HS_APPROVED_{cur_no}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
                     except Exception as e:
                         st.error(f"Błąd parsowania taryfikacji: {str(e)}")
