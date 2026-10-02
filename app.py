@@ -206,6 +206,28 @@ def process_intrastat_dataframe(text_data):
         for col in ["Ilosc_Sztuk", "Masa_Netto_KG", "Wartosc_PLN"]:
             if col in df.columns:
                 df[col] = df[col].astype(str).str.replace(",", ".").str.extract(r"(\d+\.?\d*)")[0].astype(float).fillna(0)
+        
+        # Agregacja w przypadku zdublowanych faktur / kodów CN
+        if "Nr_Faktury" in df.columns and "Kod_CN" in df.columns:
+            df = df.groupby(["Nr_Faktury", "Kod_CN"], as_index=False).agg({
+                "Sprzedawca_Nazwa": "first",
+                "Sprzedawca_NIP": "first",
+                "Sprzedawca_Kraj": "first",
+                "Sprzedawca_Ulica": "first",
+                "Sprzedawca_Kod": "first",
+                "Sprzedawca_Miasto": "first",
+                "Data_Faktury": "first",
+                "Nabywca_Nazwa": "first",
+                "Nabywca_NIP": "first",
+                "Nabywca_Kraj": "first",
+                "Nabywca_Ulica": "first",
+                "Nabywca_Kod": "first",
+                "Nabywca_Miasto": "first",
+                "Opis_Towaru": "first",
+                "Ilosc_Sztuk": "sum",
+                "Masa_Netto_KG": "sum",
+                "Wartosc_PLN": "sum"
+            })
         return df
     except Exception:
         return pd.DataFrame()
@@ -269,7 +291,7 @@ def process_stage_2_dataframe(out2_text):
     })
     
     grouped["pos"] = range(1, len(grouped) + 1)
-    grouped = grouped[["pos", "POS", "Product_Name", "Material", "HS_CODE", "CTNS", "Quantity", "NW_KGS", "GW_KGS", "Amount", "Waluta"]]
+    grouped = grouped[["pos", "POS", "Product_Name", "Material", "HS_CODE", "CTNS", "Quantity", "N.W KGS", "G.W KGS", "Amount (EUR)", "Waluta"]]
     grouped.columns = ["pos", "Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE", "CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)", "Waluta"]
     return grouped
 
@@ -639,10 +661,13 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
                         processed_intra_docs.append(f)
 
                 client = genai.Client(api_key=api_key)
+                
+                # POPRAWIONY PROMPT: Rygorystyczne zbijanie wg faktury i kodu CN w celu uniknięcia rozbicia na 16 pozycji zamiast 7
                 prompt_intra = (
-                    "Jesteś precyzyjnym systemem OCR do faktur handlowych.\n"
-                    "Zachowaj oryginalne nazwy i opisy towarów.\n"
-                    "Zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) i kropką jako separatorem dziesiętnym w pierwszej linii:\n"
+                    "Jesteś precyzyjnym systemem OCR do faktur handlowych dla Intrastat.\n"
+                    "ZASADA BEZWZGLĘDNA: Jeśli w plikach znajduje się określona liczba faktur (np. 7), wynik musi zawierać dokładnie unikalne kombinacje faktur i kodów CN.\n"
+                    "Zsumuj automatycznie pozycje o tym samym kodzie CN w obrębie tej samej faktury tak, aby nie tworzyć niepotrzebnych rozbić.\n"
+                    "Zachowaj oryginalne dane i zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) i kropką jako separatorem dziesiętnym w pierwszej linii:\n"
                     "Sprzedawca_Nazwa;Sprzedawca_NIP;Sprzedawca_Kraj;Sprzedawca_Ulica;Sprzedawca_Kod;Sprzedawca_Miasto;Nr_Faktury;Data_Faktury;Nabywca_Nazwa;Nabywca_NIP;Nabywca_Kraj;Nabywca_Ulica;Nabywca_Kod;Nabywca_Miasto;Kod_CN;Opis_Towaru;Ilosc_Sztuk;Masa_Netto_KG;Wartosc_PLN"
                 )
 
@@ -664,7 +689,7 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
                     res_intra = safe_generate_content(client, selected_model, contents)
                     df_processed = process_intrastat_dataframe(res_intra.text)
                     st.session_state.df_intra_result = df_processed
-                    st.success("✅ Pomyślnie zsumowano pozycje wg kodu CN!")
+                    st.success(f"✅ Pomyślnie przetworzono i zsumowano pozycje (liczba wierszy wynikowych: {len(df_processed)})!")
 
             except Exception as e:
                 st.error(f"Błąd przetwarzania: {str(e)}")
@@ -832,7 +857,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
 
         selected_tab = st.radio(
             "Wybierz Etap Analizy",
-            ["📋 1. Kontrola Formalna i Odprawa Chińska", "🧩 2. Zbijanie Pozycji", "🏷️️ 3. Taryfikacja & Weryfikacja Agenta"],
+            ["📋 1. Kontrola Formalna i Odprawa Chińska", "🧩 2. Zbijanie Pozycji", "🏷️ 3. Taryfikacja & Weryfikacja Agenta"],
             horizontal=True
         )
 
