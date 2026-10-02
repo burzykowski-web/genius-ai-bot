@@ -336,7 +336,7 @@ def generate_formal_pdf_report(container_no, markdown_content):
             text = re.sub(r'\*\*(.*?)\*\*', r'\1', clean_line)
             txt = text.encode('latin-1', 'replace').decode('latin-1')
             pdf.multi_cell(186, 4.5, txt)
-    return bytes(pdf.output())
+    return pdf.output()
 
 def call_ai_chunked_stage2(client, model_name, base_prompt, full_dataframe_text):
     lines = full_dataframe_text.strip().split('\n')
@@ -428,7 +428,7 @@ selected_model = st.sidebar.selectbox("Model API", ["gemini-3.6-flash"])
 st.sidebar.markdown("---")
 app_mode = st.sidebar.radio(
     "📌 Wybierz Moduł Pracy:",
-    ["🚢 Odprawy i Taryfikacja Kontenerów", "📦 Dedykowany Generator INTRASTAT (Huzar)", "🗄️ Wizualna Baza Kodów HS"]
+    ["🚢 Odprawy i Taryfikacja Kontenerów", "📦 Dedykowany Generator INTRASTAT (Huzar)", "🗄️️ Wizualna Baza Kodów HS"]
 )
 st.sidebar.markdown("---")
 
@@ -898,7 +898,7 @@ elif selected_tab == "🧩 2. Zbijanie Pozycji":
             st.error(f"Błąd przetwarzania matematycznego: {str(e)}")
 
 elif selected_tab == "🏷️ 3. Taryfikacja & Weryfikacja Agenta":
-    st.subheader("🏷️ Etap 3: Taryfikacja (Nazwa + Skład Materiału + Google Translate)")
+    st.subheader("🏷️️ Etap 3: Taryfikacja (Nazwa + Skład Materiału + Google Translate)")
     if not proj.get("out2"):
         st.warning("⚠️ Najpierw wykonaj Etap 2 (Zbijanie Pozycji)!")
     else:
