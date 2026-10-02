@@ -276,10 +276,10 @@ class CustomPDF(FPDF):
     def header(self):
         self.set_font('Helvetica', 'B', 13)
         self.set_text_color(26, 54, 93)
-        self.cell(0, 8, 'RAPORT KONTROLI FORMALNEJ I AUDYTU CELNEGO', new_x="LMARGIN", new_y="NEXT")
+        self.cell(0, 8, 'RAPORT KONTROLI FORMALNEJ I AUDYTU CELNEGO', ln=1)
         self.set_font('Helvetica', 'B', 9)
         self.set_text_color(74, 85, 104)
-        self.cell(0, 5, 'Genius AI BOT | Genius Logistics Sp. z o.o.', new_x="LMARGIN", new_y="NEXT")
+        self.cell(0, 5, 'Genius AI BOT | Genius Logistics Sp. z o.o.', ln=1)
         self.set_draw_color(43, 108, 176)
         self.set_line_width(0.6)
         self.line(10, 24, 200, 24)
@@ -304,7 +304,7 @@ def generate_formal_pdf_report(container_no, markdown_content):
     pdf.set_font('Helvetica', 'B', 9)
     pdf.set_text_color(44, 82, 130)
     clean_meta = f'KONTENER: {container_no} | STATUS: AUDYT ZAKONCZONY'
-    pdf.cell(0, 6, clean_meta.encode('latin-1', 'replace').decode('latin-1'), new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 6, clean_meta.encode('latin-1', 'replace').decode('latin-1'), ln=1)
     pdf.ln(6)
     lines = markdown_content.split('\n')
     for line in lines:
@@ -319,7 +319,8 @@ def generate_formal_pdf_report(container_no, markdown_content):
             pdf.set_font('Helvetica', 'B', 10)
             pdf.set_text_color(44, 82, 130)
             txt = clean_line.replace('###', '').strip().encode('latin-1', 'replace').decode('latin-1')
-            pdf.multi_cell(186, 5, txt, new_x="LMARGIN", new_y="NEXT")
+            pdf.multi_cell(186, 5, txt)
+            pdf.ln(1)
             pdf.set_font('Helvetica', '', 9)
             pdf.set_text_color(45, 55, 72)
         elif clean_line.startswith('-') or clean_line.startswith('*'):
@@ -328,13 +329,13 @@ def generate_formal_pdf_report(container_no, markdown_content):
             text = clean_line[1:].strip()
             text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
             txt = f' - {text}'.encode('latin-1', 'replace').decode('latin-1')
-            pdf.multi_cell(186, 4.5, txt, new_x="LMARGIN", new_y="NEXT")
+            pdf.multi_cell(186, 4.5, txt)
         else:
             pdf.set_font('Helvetica', '', 9)
             pdf.set_text_color(45, 55, 72)
             text = re.sub(r'\*\*(.*?)\*\*', r'\1', clean_line)
             txt = text.encode('latin-1', 'replace').decode('latin-1')
-            pdf.multi_cell(186, 4.5, txt, new_x="LMARGIN", new_y="NEXT")
+            pdf.multi_cell(186, 4.5, txt)
     return bytes(pdf.output())
 
 def call_ai_chunked_stage2(client, model_name, base_prompt, full_dataframe_text):
@@ -739,7 +740,6 @@ def call_ai(prompt, msg="Przetwarzanie dokumentów przez Genius AI BOT..."):
         st.error(f"Błąd połączenia: {str(e)}")
         return None
 
-# --- WZMOCNIONY PROMPT ETAPU 1: Niezależny Audyt Sztuk i Kartonów ---
 PROMPT_ETAP1 = (
     "Jesteś bezwzględnym i niezwykle skrupulatnym starszym audytorem celnym w Genius Logistics.\n"
     "Twoim zadaniem jest przeprowadzenie rygorystycznej KONTROLI FORMALNEJ I KRZYŻOWEJ (Cross-Check) między wszystkimi wgranymi dokumentami (Commercial Invoice, Packing List, Bill of Lading, Odprawa Chińska itp.).\n\n"
