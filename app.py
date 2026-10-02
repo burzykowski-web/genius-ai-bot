@@ -428,7 +428,7 @@ selected_model = st.sidebar.selectbox("Model API", ["gemini-3.6-flash"])
 st.sidebar.markdown("---")
 app_mode = st.sidebar.radio(
     "📌 Wybierz Moduł Pracy:",
-    ["🚢 Odprawy i Taryfikacja Kontenerów", "📦 Dedykowany Generator INTRASTAT (Huzar)", "🗄️️ Wizualna Baza Kodów HS"]
+    ["🚢 Odprawy i Taryfikacja Kontenerów", "📦 Dedykowany Generator INTRASTAT (Huzar)", "🗄️ Wizualna Baza Kodów HS"]
 )
 st.sidebar.markdown("---")
 
@@ -570,12 +570,11 @@ if app_mode == "🗄️ Wizualna Baza Kodów HS":
             st.warning("Brak wyników spełniających kryteria wyszukiwania.")
     else:
         st.write("Baza jest obecnie pusta.")
-    st.stop()
 
 # ==============================================================================
 # MODUŁ 2: INTRASTAT
 # ==============================================================================
-if app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
+elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
     st.title("📦 Moduł INTRASTAT — Generator Faktur XML dla Huzar WinSAD")
     st.caption("Moduł automatycznie sumuje sztuki, masy i wartości dla tożsamych kodów CN w ramach faktury.")
 
@@ -588,7 +587,7 @@ if app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
 
     if st.button("⚡ Przetwarzaj Faktury i Generuj XML dla Huzara", type="primary", use_container_width=True):
         if not uploaded_intra_docs:
-            st.warning("⚠️ Wgraj przynajmniej jeden dokument lub plik ZIP!")
+            st.warning("⚠️️ Wgraj przynajmniej jeden dokument lub plik ZIP!")
         elif not api_key:
             st.error("Wpisz klucz API Gemini w panelu bocznym.")
         else:
@@ -661,352 +660,351 @@ if app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
             mime="application/xml",
             use_container_width=True
         )
-    st.stop()
 
 # ==============================================================================
 # MODUŁ 1: KONTENERY
 # ==============================================================================
-st.sidebar.markdown("### 📦 Zarządzanie Kontenerami")
-new_no = st.sidebar.text_input("Numer Nowego Kontenera", placeholder="np. CNEU4699420").upper().strip()
-if st.sidebar.button("+ Dodaj Kontener", use_container_width=True):
-    if new_no:
-        if new_no not in st.session_state.projects:
-            st.session_state.projects[new_no] = {"docs": [], "out1": "", "out2": "", "out3": "", "calc_audit": "", "hs_approved": []}
-            save_project(new_no, st.session_state.projects[new_no])
-        st.session_state.current_container = new_no
-        st.sidebar.success(f"Aktywowano: {new_no}")
-        st.rerun()
+elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
+    st.sidebar.markdown("### 📦 Zarządzanie Kontenerami")
+    new_no = st.sidebar.text_input("Numer Nowego Kontenera", placeholder="np. CNEU4699420").upper().strip()
+    if st.sidebar.button("+ Dodaj Kontener", use_container_width=True):
+        if new_no:
+            if new_no not in st.session_state.projects:
+                st.session_state.projects[new_no] = {"docs": [], "out1": "", "out2": "", "out3": "", "calc_audit": "", "hs_approved": []}
+                save_project(new_no, st.session_state.projects[new_no])
+            st.session_state.current_container = new_no
+            st.sidebar.success(f"Aktywowano: {new_no}")
+            st.rerun()
 
-st.sidebar.markdown("---")
-hs_db = load_hs_database()
-st.sidebar.markdown(f"**🗄️ Baza Wizualna HS:** `{len(hs_db)} wzorców`")
+    st.sidebar.markdown("---")
+    hs_db = load_hs_database()
+    st.sidebar.markdown(f"**🗄️ Baza Wizualna HS:** `{len(hs_db)} wzorców`")
 
-if st.session_state.projects:
-    proj_list = list(st.session_state.projects.keys())
-    curr_idx = proj_list.index(st.session_state.current_container) if st.session_state.current_container in proj_list else 0
-    selected_proj = st.sidebar.selectbox("Zapisane Kontenery", options=proj_list, index=curr_idx)
-    st.session_state.current_container = selected_proj
+    if st.session_state.projects:
+        proj_list = list(st.session_state.projects.keys())
+        curr_idx = proj_list.index(st.session_state.current_container) if st.session_state.current_container in proj_list else 0
+        selected_proj = st.sidebar.selectbox("Zapisane Kontenery", options=proj_list, index=curr_idx)
+        st.session_state.current_container = selected_proj
 
-    if st.sidebar.button("❌ Usuń bieżący projekt", type="secondary", use_container_width=True):
-        delete_project_file(st.session_state.current_container)
-        del st.session_state.projects[st.session_state.current_container]
-        st.session_state.current_container = list(st.session_state.projects.keys())[0] if st.session_state.projects else None
-        st.rerun()
+        if st.sidebar.button("❌ Usuń bieżący projekt", type="secondary", use_container_width=True):
+            delete_project_file(st.session_state.current_container)
+            del st.session_state.projects[st.session_state.current_container]
+            st.session_state.current_container = list(st.session_state.projects.keys())[0] if st.session_state.projects else None
+            st.rerun()
 
-if not st.session_state.current_container:
-    st.title("Genius AI BOT — Gotowy do Pracy")
-    st.info("Wpisz numer kontenera w panelu po lewej stronie i kliknij **+ Dodaj Kontener**, aby rozpocząć.")
-    st.stop()
-
-cur_no = st.session_state.current_container
-proj = st.session_state.projects[cur_no]
-
-st.title(f"Genius AI BOT | Kontener: `{cur_no}`")
-
-uploaded_files = st.file_uploader(
-    "1. Dokumenty Ładunkowe (Wgraj plik ZIP lub pojedyncze CI, PL, BL, Odprawa Chińska / 报关单, Zdjęcia towarów)",
-    type=["zip", "pdf", "xlsx", "xls", "png", "jpg", "jpeg"],
-    accept_multiple_files=True
-)
-
-if uploaded_files:
-    saved_docs = save_uploaded_files(cur_no, uploaded_files)
-    proj["docs"] = saved_docs
-    st.success(f"Zapisano i załączono dokumenty: łączna liczba plików to {len(proj['docs'])}")
-elif proj.get("docs"):
-    st.info(f"📂 Wczytano zapisane dokumenty z dysku ({len(proj['docs'])} szt.): " + ", ".join([d.name for d in proj["docs"]]))
-
-def call_ai(prompt, msg="Przetwarzanie dokumentów przez Genius AI BOT..."):
-    if not api_key: st.error("Brak klucza API!"); return None
-    if not proj.get("docs"): st.error("Brak załączonych plików dla tego kontenera!"); return None
-    try:
-        client = genai.Client(api_key=api_key)
-        contents = [prompt]
-        for f in proj["docs"]:
-            if f.type == "spreadsheet":
-                try:
-                    df_temp = pd.read_excel(BytesIO(f.getvalue()), sheet_name=0)
-                    contents.append(f"\n--- TREŚĆ PLIKU EXCEL ({f.name}) ---\n" + df_temp.to_string() + "\n")
-                except Exception:
-                    pass
-            elif f.type == "application/pdf":
-                contents.append(types.Part.from_bytes(data=f.getvalue(), mime_type="application/pdf"))
-            elif f.type in ["image/jpeg", "application/png"]:
-                contents.append(types.Part.from_bytes(data=f.getvalue(), mime_type=f.type))
-        with st.spinner(msg):
-            res = safe_generate_content(client, selected_model, contents)
-            return res.text
-    except Exception as e:
-        st.error(f"Błąd połączenia: {str(e)}")
-        return None
-
-PROMPT_ETAP1 = (
-    "Jesteś bezwzględnym i niezwykle skrupulatnym starszym audytorem celnym w Genius Logistics.\n"
-    "Twoim zadaniem jest przeprowadzenie rygorystycznej KONTROLI FORMALNEJ I KRZYŻOWEJ (Cross-Check) między wszystkimi wgranymi dokumentami (Commercial Invoice, Packing List, Bill of Lading, Odprawa Chińska itp.).\n\n"
-    "BEZWZGLĘDNY WYMÓG ROZDZIELNEJ KONTROLI ILOŚCI I KARTONÓW:\n"
-    "1. SZTUKI (Quantity / pcs): Porównaj pozycję po pozycji liczbę sztuk na Fakturze Handlowej (CI) z liczbą sztuk na Liście Pakującej (PL) oraz Odprawie Chińskiej. Nawet najmniejsza lub największa różnica w ilości sztuk musi być bezwzględnie wykryta i opisana.\n"
-    "2. KARTONY / OPAKOWANIA (CTNS / Cartons / Packages): Przeprowadź ODRĘBNY, niezależny audyt liczby kartonów dla każdej pozycji. Porównaj liczbę kartonów w CI z PL / Odprawą. Wypisz każdą rozbieżność kartonową osobno.\n"
-    "3. Jeśli w którymkolwiek dokumencie brakuje spójności w sztukach lub kartonach, stwórz czytelną tabelę rozbieżności z podziałem na: [Nazwa Towaru | Sztuki na Fakturze | Sztuki na PL | Kartony na Fakturze | Kartony na PL | Wykryta Różnica].\n\n"
-    "Użyj przejrzystego formatowania Markdown z nagłówkami i ikonami:\n"
-    "### 📄 1. Identyfikacja Dokumentów i Stron\n"
-    "### 🇨🇳 2. Weryfikacja i Porównanie z Odprawą Chińską\n"
-    "### 🔢 3. KONTROLA ILOŚCI SZTUK (CI vs PL / Odprawa)\n"
-    "### 📦 4. KONTROLA LICZBY KARTONÓW (CI vs PL / Odprawa)\n"
-    "### ⚓ 5. Warunki Dostawy i Logistyka\n"
-    "### ✍️ 6. Kontrola Podpisów, Pieczęci i Unikalnych Identyfikatorów\n"
-    "### 🔍 7. Podsumowanie, Wykryte Błędy Techniczne i Wnioski Celne"
-)
-
-if st.button("🚀 Wykonaj Pełną Analizę (Etapy 1 - 3)", type="primary", use_container_width=True):
-    if not proj.get("docs"):
-        st.warning("Najpierw załącz dokumenty ładunkowe!")
+    if not st.session_state.current_container:
+        st.title("Genius AI BOT — Gotowy do Pracy")
+        st.info("Wpisz numer kontenera w panelu po lewej stronie i kliknij **+ Dodaj Kontener**, aby rozpocząć.")
     else:
-        res1 = call_ai(PROMPT_ETAP1, "Krok 1/3: Rygorystyczny audyt sztuk i kartonów (Cross-Check)...")
-        if res1: proj["out1"] = res1
+        cur_no = st.session_state.current_container
+        proj = st.session_state.projects[cur_no]
 
-        p2 = (
-            "Jesteś precyzyjnym skanerem OCR. Odczytaj KAŻDĄ pozycję faktury/PL/Odprawy Chińskiej z osobna.\n"
-            "ZASADA BEZWZGLĘDNA: Oddziel nazwę produktu od składu materiałowego (np. materiały takie jak: PU, IRON, WOOD, STEEL, PPE, PLASTIC itp.).\n"
-            "Zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) i kropką jako separatorem dziesiętnym w pierwszej linii:\n"
-            "POS;Product_Name;Material;HS_CODE;CTNS;Quantity;NW_KGS;GW_KGS;Amount;Waluta"
+        st.title(f"Genius AI BOT | Kontener: `{cur_no}`")
+
+        uploaded_files = st.file_uploader(
+            "1. Dokumenty Ładunkowe (Wgraj plik ZIP lub pojedyncze CI, PL, BL, Odprawa Chińska / 报关单, Zdjęcia towarów)",
+            type=["zip", "pdf", "xlsx", "xls", "png", "jpg", "jpeg"],
+            accept_multiple_files=True
         )
-        
-        with st.spinner("Krok 2/3: Automatyczne odczytywanie i zbijanie tysięcy pozycji w tle..."):
-            client_obj = genai.Client(api_key=api_key)
-            raw_ocr_text = call_ai(p2, "Krok 2/3: Odczytywanie OCR wszystkich pozycji z dokumentów...")
-            if raw_ocr_text:
-                res2 = call_ai_chunked_stage2(client_obj, selected_model, p2, raw_ocr_text)
-                proj["out2"] = res2
 
-        if proj.get("out2"):
-            df_grouped_temp = process_stage_2_dataframe(proj["out2"])
-            
-            with st.spinner("Krok 3/3: Automatyczna taryfikacja zbitych pozycji..."):
-                res3 = call_ai_chunked_stage3(client_obj, selected_model, df_grouped_temp)
-                
-            if res3:
-                try:
-                    df_temp_t3 = parse_stage_3_csv(res3)
-                    translations = []
-                    for _, r_item in df_temp_t3.iterrows():
-                        p_name = str(r_item.get("Nazwa Produktu", ""))
-                        mat = str(r_item.get("Skład Materiałowy", ""))
-                        combined = f"{p_name} ({mat})"
-                        translations.append(translate_text_google(combined))
-                    if "Opcjonalne Tłumaczenie" not in df_temp_t3.columns:
-                        df_temp_t3.insert(4, "Opcjonalne Tłumaczenie", translations)
-                    res3 = df_temp_t3.to_csv(index=False, sep=";")
-                except Exception:
-                    pass
-                proj["out3"] = res3
+        if uploaded_files:
+            saved_docs = save_uploaded_files(cur_no, uploaded_files)
+            proj["docs"] = saved_docs
+            st.success(f"Zapisano i załączono dokumenty: łączna liczba plików to {len(proj['docs'])}")
+        elif proj.get("docs"):
+            st.info(f"📂 Wczytano zapisane dokumenty z dysku ({len(proj['docs'])} szt.): " + ", ".join([d.name for d in proj["docs"]]))
 
-        save_project(cur_no, proj)
-        st.success("✅ Pełna analiza (w tym automatyczne paczkowanie 1000+ pozycji) zakończona pomyślnie!")
-        st.rerun()
+        def call_ai(prompt, msg="Przetwarzanie dokumentów przez Genius AI BOT..."):
+            if not api_key: st.error("Brak klucza API!"); return None
+            if not proj.get("docs"): st.error("Brak załączonych plików dla tego kontenera!"); return None
+            try:
+                client = genai.Client(api_key=api_key)
+                contents = [prompt]
+                for f in proj["docs"]:
+                    if f.type == "spreadsheet":
+                        try:
+                            df_temp = pd.read_excel(BytesIO(f.getvalue()), sheet_name=0)
+                            contents.append(f"\n--- TREŚĆ PLIKU EXCEL ({f.name}) ---\n" + df_temp.to_string() + "\n")
+                        except Exception:
+                            pass
+                    elif f.type == "application/pdf":
+                        contents.append(types.Part.from_bytes(data=f.getvalue(), mime_type="application/pdf"))
+                    elif f.type in ["image/jpeg", "application/png"]:
+                        contents.append(types.Part.from_bytes(data=f.getvalue(), mime_type=f.type))
+                with st.spinner(msg):
+                    res = safe_generate_content(client, selected_model, contents)
+                    return res.text
+            except Exception as e:
+                st.error(f"Błąd połączenia: {str(e)}")
+                return None
 
-st.markdown("---")
-
-selected_tab = st.radio(
-    "Wybierz Etap Analizy",
-    ["📋 1. Kontrola Formalna i Odprawa Chińska", "🧩 2. Zbijanie Pozycji", "🏷️ 3. Taryfikacja & Weryfikacja Agenta"],
-    horizontal=True
-)
-
-st.markdown("---")
-
-if selected_tab == "📋 1. Kontrola Formalna i Odprawa Chińska":
-    st.subheader("📋 Audyt Formalny i Krzyżowa Kontrola z Odprawą Chińską")
-    if st.button("Wykonaj Kontrolę Formalną", key="b1"):
-        res = call_ai(PROMPT_ETAP1)
-        if res: proj["out1"] = res; save_project(cur_no, proj); st.rerun()
-    if proj.get("out1"):
-        st.markdown("---")
-        col_title, col_pdf = st.columns([3, 1])
-        with col_title: st.success("✅ Wynik audytu gotowy")
-        with col_pdf:
-            if FPDF_AVAILABLE:
-                pdf_bytes = generate_formal_pdf_report(cur_no, proj["out1"])
-                st.download_button("📄 Pobierz Raport PDF (.pdf)", data=pdf_bytes, file_name=f"Raport_Formalny_{cur_no}.pdf", mime="application/pdf", use_container_width=True)
-        st.markdown(proj["out1"])
-
-elif selected_tab == "🧩 2. Zbijanie Pozycji":
-    st.subheader("🧩 Agregacja Pozycji (Rozdzielenie Nazwy i Materiału)")
-    if st.button("Wykonaj Zbijanie Pozycji", key="b2"):
-        p2 = (
-            "Jesteś precyzyjnym skanerem OCR. Odczytaj KAŻDĄ pozycję faktury/PL z osobna z dokumentów.\n"
-            "Oddziel nazwę produktu od składu materiałowego (np. PU, IRON, WOOD, STEEL, PPE).\n"
-            "Zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) i kropką jako separatorem dziesiętnym w pierwszej linii:\n"
-            "POS;Product_Name;Material;HS_CODE;CTNS;Quantity;NW_KGS;GW_KGS;Amount;Waluta"
+        PROMPT_ETAP1 = (
+            "Jesteś bezwzględnym i niezwykle skrupulatnym starszym audytorem celnym w Genius Logistics.\n"
+            "Twoim zadaniem jest przeprowadzenie rygorystycznej KONTROLI FORMALNEJ I KRZYŻOWEJ (Cross-Check) między wszystkimi wgranymi dokumentami (Commercial Invoice, Packing List, Bill of Lading, Odprawa Chińska itp.).\n\n"
+            "BEZWZGLĘDNY WYMÓG ROZDZIELNEJ KONTROLI ILOŚCI I KARTONÓW:\n"
+            "1. SZTUKI (Quantity / pcs): Porównaj pozycję po pozycji liczbę sztuk na Fakturze Handlowej (CI) z liczbą sztuk na Liście Pakującej (PL) oraz Odprawie Chińskiej. Nawet najmniejsza lub największa różnica w ilości sztuk musi być bezwzględnie wykryta i opisana.\n"
+            "2. KARTONY / OPAKOWANIA (CTNS / Cartons / Packages): Przeprowadź ODRĘBNY, niezależny audyt liczby kartonów dla każdej pozycji. Porównaj liczbę kartonów w CI z PL / Odprawą. Wypisz każdą rozbieżność kartonową osobno.\n"
+            "3. Jeśli w którymkolwiek dokumencie brakuje spójności w sztukach lub kartonach, stwórz czytelną tabelę rozbieżności z podziałem na: [Nazwa Towaru | Sztuki na Fakturze | Sztuki na PL | Kartony na Fakturze | Kartony na PL | Wykryta Różnica].\n\n"
+            "Użyj przejrzystego formatowania Markdown z nagłówkami i ikonami:\n"
+            "### 📄 1. Identyfikacja Dokumentów i Stron\n"
+            "### 🇨🇳 2. Weryfikacja i Porównanie z Odprawą Chińską\n"
+            "### 🔢 3. KONTROLA ILOŚCI SZTUK (CI vs PL / Odprawa)\n"
+            "### 📦 4. KONTROLA LICZBY KARTONÓW (CI vs PL / Odprawa)\n"
+            "### ⚓ 5. Warunki Dostawy i Logistyka\n"
+            "### ✍️ 6. Kontrola Podpisów, Pieczęci i Unikalnych Identyfikatorów\n"
+            "### 🔍 7. Podsumowanie, Wykryte Błędy Techniczne i Wnioski Celne"
         )
-        with st.spinner("Automatyczne zbijanie wielotysięcznych pozycji w tle..."):
-            client_obj = genai.Client(api_key=api_key)
-            raw_ocr_text = call_ai(p2)
-            if raw_ocr_text:
-                res = call_ai_chunked_stage2(client_obj, selected_model, p2, raw_ocr_text)
-                if res: proj["out2"] = res; save_project(cur_no, proj); st.rerun()
-    
-    if proj.get("out2"):
-        try:
-            grouped = process_stage_2_dataframe(proj["out2"])
-            
-            total_ctns = grouped["CTNS"].sum()
-            total_qty = grouped["Quantity (pcs.)"].sum()
-            total_nw = grouped["N.W KGS"].sum()
-            total_gw = grouped["G.W KGS"].sum()
-            total_amt = grouped["Amount (EUR)"].sum()
 
-            col_kpi1, col_kpi2, col_kpi3, col_kpi4, col_kpi5 = st.columns(5)
-            with col_kpi1: st.metric("Kartony", f"{total_ctns:,.0f}")
-            with col_kpi2: st.metric("Sztuki", f"{total_qty:,.0f}")
-            with col_kpi3: st.metric("Masa Netto", f"{total_nw:,.1f} kg")
-            with col_kpi4: st.metric("Masa Brutto", f"{total_gw:,.1f} kg")
-            with col_kpi5: st.metric("Wartość", f"{total_amt:,.2f}")
+        if st.button("🚀 Wykonaj Pełną Analizę (Etapy 1 - 3)", type="primary", use_container_width=True):
+            if not proj.get("docs"):
+                st.warning("Najpierw załącz dokumenty ładunkowe!")
+            else:
+                res1 = call_ai(PROMPT_ETAP1, "Krok 1/3: Rygorystyczny audyt sztuk i kartonów (Cross-Check)...")
+                if res1: proj["out1"] = res1
 
-            st.dataframe(grouped, use_container_width=True, hide_index=True)
-            
-            st.markdown("---")
-            if st.button("🔍 Niezależny audyt rozbieżności sztuk i kartonów (CI vs PL)", key="btn_audit_calc"):
-                table_csv_preview = grouped.to_csv(index=False, sep=";")
-                audit_prompt = (
-                    "Jesteś rygorystycznym audytorem celno-finansowym w Genius Logistics.\n"
-                    "Oto zagregowana tabela pozycji towarowych po zbijaniu:\n"
-                    f"{table_csv_preview}\n\n"
-                    "Przeanalizuj oryginalne dokumenty (Commercial Invoice, Packing List, Odprawę Chińską) i wykonaj SZCZEGÓŁOWY AUDYT ROZBIEŻNOŚCI:\n"
-                    "1. Porównaj ODRĘBNIE liczbę sztuk (Quantity) oraz liczbę kartonów (CTNS) dla każdej pozycji między Fakturą (CI) a Packing Listą (PL).\n"
-                    "2. Jeśli występują różnice (nawet duże rozbieżności w sztukach lub kartonach), wypisz je precyzyjnie w punktach, podając nazwę towaru, wartość sztuk na CI, sztuk na PL oraz kartonów na CI i kartonów na PL.\n"
-                    "3. Sprawdź ogólne sumy."
+                p2 = (
+                    "Jesteś precyzyjnym skanerem OCR. Odczytaj KAŻDĄ pozycję faktury/PL/Odprawy Chińskiej z osobna.\n"
+                    "ZASADA BEZWZGLĘDNA: Oddziel nazwę produktu od składu materiałowego (np. materiały takie jak: PU, IRON, WOOD, STEEL, PPE, PLASTIC itp.).\n"
+                    "Zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) i kropką jako separatorem dziesiętnym w pierwszej linii:\n"
+                    "POS;Product_Name;Material;HS_CODE;CTNS;Quantity;NW_KGS;GW_KGS;Amount;Waluta"
                 )
-                audit_res = call_ai(audit_prompt, "Audytor niezależnie weryfikuje rozbieżności sztuk i kartonów...")
-                if audit_res:
-                    proj["calc_audit"] = audit_res
-                    save_project(cur_no, proj)
-                    st.rerun()
-
-            if proj.get("calc_audit"):
-                st.info("📌 **Wynik Audytu Rozbieżności Sztuk i Kartonów:**")
-                st.markdown(proj["calc_audit"])
-                st.markdown("---")
-
-            df_excel = grouped.copy()
-            for col in ["N.W KGS", "G.W KGS", "Amount (EUR)"]:
-                df_excel[col] = df_excel[col].apply(lambda x: f"{x:.2f}".replace(".", ","))
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df_excel.to_excel(writer, index=False, sheet_name='Zbicie Pozycji')
-            st.download_button("📊 Pobierz zweryfikowany plik Excel (.xlsx)", data=output.getvalue(), file_name=f"Genius_AI_Zbicie_{cur_no}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        except Exception as e:
-            st.error(f"Błąd przetwarzania matematycznego: {str(e)}")
-
-elif selected_tab == "🏷️ 3. Taryfikacja & Weryfikacja Agenta":
-    st.subheader("🏷️️ Etap 3: Taryfikacja (Nazwa + Skład Materiału + Google Translate)")
-    if not proj.get("out2"):
-        st.warning("⚠️ Najpierw wykonaj Etap 2 (Zbijanie Pozycji)!")
-    else:
-        if st.button("Wykonaj Taryfikację Zbieganych Pozycji", key="b3"):
-            try:
-                df_stage2 = process_stage_2_dataframe(proj["out2"])
-                with st.spinner("Automatyczna taryfikacja paczkowa w tle..."):
-                    client_obj = genai.Client(api_key=api_key)
-                    res = call_ai_chunked_stage3(client_obj, selected_model, df_stage2)
-                if res:
-                    df_temp_t3 = parse_stage_3_csv(res)
-                    translations = []
-                    for _, r_item in df_temp_t3.iterrows():
-                        p_name = str(r_item.get("Nazwa Produktu", ""))
-                        mat = str(r_item.get("Skład Materiałowy", ""))
-                        combined = f"{p_name} ({mat})"
-                        translations.append(translate_text_google(combined))
-                    if "Opcjonalne Tłumaczenie" not in df_temp_t3.columns:
-                        df_temp_t3.insert(4, "Opcjonalne Tłumaczenie", translations)
-                    proj["out3"] = df_temp_t3.to_csv(index=False, sep=";")
-                    save_project(cur_no, proj)
-                    st.rerun()
-            except Exception as e:
-                st.error(f"Błąd: {str(e)}")
-
-        if proj.get("out3"):
-            try:
-                df_t3 = parse_stage_3_csv(proj["out3"])
-                current_db = load_hs_database()
-                db_matched, final_codes, cn_descriptions, opt_translations, statuses, db_images = [], [], [], [], [], []
                 
-                for _, row in df_t3.iterrows():
-                    p_name = str(row.get("Nazwa Produktu", "")).strip()
-                    mat = str(row.get("Skład Materiałowy", "")).strip()
-                    proposed_code = str(row.get("TARIC_PROPOSED", row.get("CN_HS_CODE", ""))).strip()
-                    proposed_cn_desc = str(row.get("Oficjalny Opis CN", row.get("Reasoning", ""))).strip()
+                with st.spinner("Krok 2/3: Automatyczne odczytywanie i zbijanie tysięcy pozycji w tle..."):
+                    client_obj = genai.Client(api_key=api_key)
+                    raw_ocr_text = call_ai(p2, "Krok 2/3: Odczytywanie OCR wszystkich pozycji z dokumentów...")
+                    if raw_ocr_text:
+                        res2 = call_ai_chunked_stage2(client_obj, selected_model, p2, raw_ocr_text)
+                        proj["out2"] = res2
+
+                if proj.get("out2"):
+                    df_grouped_temp = process_stage_2_dataframe(proj["out2"])
                     
-                    if "Opcjonalne Tłumaczenie" in df_t3.columns and pd.notna(row.get("Opcjonalne Tłumaczenie")):
-                        proposed_opt_trans = str(row.get("Opcjonalne Tłumaczenie", "")).strip()
-                    else:
-                        proposed_opt_trans = translate_text_google(f"{p_name} ({mat})")
-                    
-                    matched_in_db = False
-                    for db_k, db_v in current_db.items():
-                        db_prod = str(db_v.get("product_name", "")).strip().lower()
-                        db_mat = str(db_v.get("material", "")).strip().lower()
-                        db_taric = str(db_v.get("taric", "")).strip().lower()
+                    with st.spinner("Krok 3/3: Automatyczna taryfikacja zbitych pozycji..."):
+                        res3 = call_ai_chunked_stage3(client_obj, selected_model, df_grouped_temp)
                         
-                        if db_prod == p_name.lower() and db_mat == mat.lower() and db_taric == proposed_code.lower():
-                            db_matched.append(True)
-                            final_codes.append(db_v.get("taric", proposed_code))
-                            cn_descriptions.append(db_v.get("cn_description", proposed_cn_desc))
-                            opt_translations.append(db_v.get("optional_translation", proposed_opt_trans))
-                            statuses.append("🟢 BAZA (Auto-Zaakceptowano)")
-                            db_images.append(db_v.get("image", ""))
-                            matched_in_db = True
-                            break
+                    if res3:
+                        try:
+                            df_temp_t3 = parse_stage_3_csv(res3)
+                            translations = []
+                            for _, r_item in df_temp_t3.iterrows():
+                                p_name = str(r_item.get("Nazwa Produktu", ""))
+                                mat = str(r_item.get("Skład Materiałowy", ""))
+                                combined = f"{p_name} ({mat})"
+                                translations.append(translate_text_google(combined))
+                            if "Opcjonalne Tłumaczenie" not in df_temp_t3.columns:
+                                df_temp_t3.insert(4, "Opcjonalne Tłumaczenie", translations)
+                            res3 = df_temp_t3.to_csv(index=False, sep=";")
+                        except Exception:
+                            pass
+                        proj["out3"] = res3
+
+                save_project(cur_no, proj)
+                st.success("✅ Pełna analiza (w tym automatyczne paczkowanie 1000+ pozycji) zakończona pomyślnie!")
+                st.rerun()
+
+        st.markdown("---")
+
+        selected_tab = st.radio(
+            "Wybierz Etap Analizy",
+            ["📋 1. Kontrola Formalna i Odprawa Chińska", "🧩 2. Zbijanie Pozycji", "🏷️ 3. Taryfikacja & Weryfikacja Agenta"],
+            horizontal=True
+        )
+
+        st.markdown("---")
+
+        if selected_tab == "📋 1. Kontrola Formalna i Odprawa Chińska":
+            st.subheader("📋 Audyt Formalny i Krzyżowa Kontrola z Odprawą Chińską")
+            if st.button("Wykonaj Kontrolę Formalną", key="b1"):
+                res = call_ai(PROMPT_ETAP1)
+                if res: proj["out1"] = res; save_project(cur_no, proj); st.rerun()
+            if proj.get("out1"):
+                st.markdown("---")
+                col_title, col_pdf = st.columns([3, 1])
+                with col_title: st.success("✅ Wynik audytu gotowy")
+                with col_pdf:
+                    if FPDF_AVAILABLE:
+                        pdf_bytes = generate_formal_pdf_report(cur_no, proj["out1"])
+                        st.download_button("📄 Pobierz Raport PDF (.pdf)", data=pdf_bytes, file_name=f"Raport_Formalny_{cur_no}.pdf", mime="application/pdf", use_container_width=True)
+                st.markdown(proj["out1"])
+
+        elif selected_tab == "🧩 2. Zbijanie Pozycji":
+            st.subheader("🧩 Agregacja Pozycji (Rozdzielenie Nazwy i Materiału)")
+            if st.button("Wykonaj Zbijanie Pozycji", key="b2"):
+                p2 = (
+                    "Jesteś precyzyjnym skanerem OCR. Odczytaj KAŻDĄ pozycję faktury/PL z osobna z dokumentów.\n"
+                    "Oddziel nazwę produktu od składu materiałowego (np. PU, IRON, WOOD, STEEL, PPE).\n"
+                    "Zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) i kropką jako separatorem dziesiętnym w pierwszej linii:\n"
+                    "POS;Product_Name;Material;HS_CODE;CTNS;Quantity;NW_KGS;GW_KGS;Amount;Waluta"
+                )
+                with st.spinner("Automatyczne zbijanie wielotysięcznych pozycji w tle..."):
+                    client_obj = genai.Client(api_key=api_key)
+                    raw_ocr_text = call_ai(p2)
+                    if raw_ocr_text:
+                        res = call_ai_chunked_stage2(client_obj, selected_model, p2, raw_ocr_text)
+                        if res: proj["out2"] = res; save_project(cur_no, proj); st.rerun()
+            
+            if proj.get("out2"):
+                try:
+                    grouped = process_stage_2_dataframe(proj["out2"])
                     
-                    if not matched_in_db:
-                        db_matched.append(False)
-                        final_codes.append(proposed_code)
-                        cn_descriptions.append(proposed_cn_desc)
-                        opt_translations.append(proposed_opt_trans)
-                        statuses.append("🟡 Do Weryfikacji AI")
-                        db_images.append("")
+                    total_ctns = grouped["CTNS"].sum()
+                    total_qty = grouped["Quantity (pcs.)"].sum()
+                    total_nw = grouped["N.W KGS"].sum()
+                    total_gw = grouped["G.W KGS"].sum()
+                    total_amt = grouped["Amount (EUR)"].sum()
 
-                df_t3["Status Bazy"] = statuses
-                df_t3["Opcjonalne Tłumaczenie"] = opt_translations
-                df_t3["Oficjalny Opis CN"] = cn_descriptions
-                df_t3["Zdjęcie wzorca"] = db_images
+                    col_kpi1, col_kpi2, col_kpi3, col_kpi4, col_kpi5 = st.columns(5)
+                    with col_kpi1: st.metric("Kartony", f"{total_ctns:,.0f}")
+                    with col_kpi2: st.metric("Sztuki", f"{total_qty:,.0f}")
+                    with col_kpi3: st.metric("Masa Netto", f"{total_nw:,.1f} kg")
+                    with col_kpi4: st.metric("Masa Brutto", f"{total_gw:,.1f} kg")
+                    with col_kpi5: st.metric("Wartość", f"{total_amt:,.2f}")
 
-                st.markdown("### 🤖 3A. Propozycje AI i Dopasowania z Wizualnej Bazy")
-                st.dataframe(df_t3, use_container_width=True, hide_index=True)
-                st.markdown("---")
-                st.markdown("### 👨‍💼 3B. Weryfikacja & Akceptacja Agenta Celnego")
-                st.info("💡 **Wskazówka:** System sprawdza 3 parametry zgodności (`Nazwa + Skład + Kod CN`) z Twoją Bazą Wizualną. Możesz edytować dowolne pole w tabeli poniżej.")
-
-                if "df_editor" not in proj or not proj["hs_approved"]:
-                    df_editor_init = df_t3.copy()
-                    df_editor_init["Zaakceptowano"] = db_matched
-                    df_editor_init["Ostateczny Kod TARIC"] = final_codes
-                    df_editor_init["Skład Materiałowy"] = [str(r.get("Skład Materiałowy", "")) for _, r in df_t3.iterrows()]
-                    df_editor_init["Opcjonalne Tłumaczenie"] = opt_translations
-                    df_editor_init["Oficjalny Opis CN"] = cn_descriptions
-                    df_editor_init["Uwagi Agenta"] = ["Potwierdzono z Bazy (3 parametry)" if m else "Do weryfikacji" for m in db_matched]
-                else:
-                    df_editor_init = pd.DataFrame(proj["hs_approved"])
-
-                edited_df = st.data_editor(df_editor_init, use_container_width=True, hide_index=True, num_rows="dynamic", key=f"editor_{cur_no}")
-
-                st.markdown("---")
-                upload_db_img = st.file_uploader("📷 Wgraj zdjęcie referencyjne dla tych pozycji do bazy (opcjonalnie)", type=["jpg", "jpeg", "png"], key=f"img_up_{cur_no}")
-
-                if st.button("💾 Zatwierdź Kody HS dla Urzędu Celnego i Zapisz do Bazy", type="primary"):
-                    records = edited_df.to_dict(orient="records")
-                    proj["hs_approved"] = records
-                    save_project(cur_no, proj)
-                    added = update_hs_database_from_records(records, upload_db_img)
-                    st.success(f"✅ Zatwierdzono! Dodano/zaktualizowano {added} wzorców w Wizualnej Bazie (wg 3 parametrów).")
-                    st.rerun()
-
-                if proj.get("hs_approved"):
+                    st.dataframe(grouped, use_container_width=True, hide_index=True)
+                    
                     st.markdown("---")
-                    st.success("🔒 **Dokumentacja gotowa do PUESC / Huzar**")
-                    df_approved = pd.DataFrame(proj["hs_approved"])
-                    out_final_excel = BytesIO()
-                    with pd.ExcelWriter(out_final_excel, engine='openpyxl') as writer:
-                        df_approved.to_excel(writer, index=False, sheet_name='HS_CODE_APPROVED')
-                    st.download_button("🏛️ Pobierz Zgodę Celną Excel (.xlsx)", data=out_final_excel.getvalue(), file_name=f"HS_APPROVED_{cur_no}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-            except Exception as e:
-                st.error(f"Błąd parsowania taryfikacji: {str(e)}")
+                    if st.button("🔍 Niezależny audyt rozbieżności sztuk i kartonów (CI vs PL)", key="btn_audit_calc"):
+                        table_csv_preview = grouped.to_csv(index=False, sep=";")
+                        audit_prompt = (
+                            "Jesteś rygorystycznym audytorem celno-finansowym w Genius Logistics.\n"
+                            "Oto zagregowana tabela pozycji towarowych po zbijaniu:\n"
+                            f"{table_csv_preview}\n\n"
+                            "Przeanalizuj oryginalne dokumenty (Commercial Invoice, Packing List, Odprawę Chińską) i wykonaj SZCZEGÓŁOWY AUDYT ROZBIEŻNOŚCI:\n"
+                            "1. Porównaj ODRĘBNIE liczbę sztuk (Quantity) oraz liczbę kartonów (CTNS) dla każdej pozycji między Fakturą (CI) a Packing Listą (PL).\n"
+                            "2. Jeśli występują różnice (nawet duże rozbieżności w sztukach lub kartonach), wypisz je precyzyjnie w punktach, podając nazwę towaru, wartość sztuk na CI, sztuk na PL oraz kartonów na CI i kartonów na PL.\n"
+                            "3. Sprawdź ogólne sumy."
+                        )
+                        audit_res = call_ai(audit_prompt, "Audytor niezależnie weryfikuje rozbieżności sztuk i kartonów...")
+                        if audit_res:
+                            proj["calc_audit"] = audit_res
+                            save_project(cur_no, proj)
+                            st.rerun()
+
+                    if proj.get("calc_audit"):
+                        st.info("📌 **Wynik Audytu Rozbieżności Sztuk i Kartonów:**")
+                        st.markdown(proj["calc_audit"])
+                        st.markdown("---")
+
+                    df_excel = grouped.copy()
+                    for col in ["N.W KGS", "G.W KGS", "Amount (EUR)"]:
+                        df_excel[col] = df_excel[col].apply(lambda x: f"{x:.2f}".replace(".", ","))
+                    output = BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df_excel.to_excel(writer, index=False, sheet_name='Zbicie Pozycji')
+                    st.download_button("📊 Pobierz zweryfikowany plik Excel (.xlsx)", data=output.getvalue(), file_name=f"Genius_AI_Zbicie_{cur_no}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                except Exception as e:
+                    st.error(f"Błąd przetwarzania matematycznego: {str(e)}")
+
+        elif selected_tab == "🏷️ 3. Taryfikacja & Weryfikacja Agenta":
+            st.subheader("🏷️ Etap 3: Taryfikacja (Nazwa + Skład Materiału + Google Translate)")
+            if not proj.get("out2"):
+                st.warning("⚠️ Najpierw wykonaj Etap 2 (Zbijanie Pozycji)!")
+            else:
+                if st.button("Wykonaj Taryfikację Zbieganych Pozycji", key="b3"):
+                    try:
+                        df_stage2 = process_stage_2_dataframe(proj["out2"])
+                        with st.spinner("Automatyczna taryfikacja paczkowa w tle..."):
+                            client_obj = genai.Client(api_key=api_key)
+                            res = call_ai_chunked_stage3(client_obj, selected_model, df_stage2)
+                        if res:
+                            df_temp_t3 = parse_stage_3_csv(res)
+                            translations = []
+                            for _, r_item in df_temp_t3.iterrows():
+                                p_name = str(r_item.get("Nazwa Produktu", ""))
+                                mat = str(r_item.get("Skład Materiałowy", ""))
+                                combined = f"{p_name} ({mat})"
+                                translations.append(translate_text_google(combined))
+                            if "Opcjonalne Tłumaczenie" not in df_temp_t3.columns:
+                                df_temp_t3.insert(4, "Opcjonalne Tłumaczenie", translations)
+                            proj["out3"] = df_temp_t3.to_csv(index=False, sep=";")
+                            save_project(cur_no, proj)
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Błąd: {str(e)}")
+
+                if proj.get("out3"):
+                    try:
+                        df_t3 = parse_stage_3_csv(proj["out3"])
+                        current_db = load_hs_database()
+                        db_matched, final_codes, cn_descriptions, opt_translations, statuses, db_images = [], [], [], [], [], []
+                        
+                        for _, row in df_t3.iterrows():
+                            p_name = str(row.get("Nazwa Produktu", "")).strip()
+                            mat = str(row.get("Skład Materiałowy", "")).strip()
+                            proposed_code = str(row.get("TARIC_PROPOSED", row.get("CN_HS_CODE", ""))).strip()
+                            proposed_cn_desc = str(row.get("Oficjalny Opis CN", row.get("Reasoning", ""))).strip()
+                            
+                            if "Opcjonalne Tłumaczenie" in df_t3.columns and pd.notna(row.get("Opcjonalne Tłumaczenie")):
+                                proposed_opt_trans = str(row.get("Opcjonalne Tłumaczenie", "")).strip()
+                            else:
+                                proposed_opt_trans = translate_text_google(f"{p_name} ({mat})")
+                            
+                            matched_in_db = False
+                            for db_k, db_v in current_db.items():
+                                db_prod = str(db_v.get("product_name", "")).strip().lower()
+                                db_mat = str(db_v.get("material", "")).strip().lower()
+                                db_taric = str(db_v.get("taric", "")).strip().lower()
+                                
+                                if db_prod == p_name.lower() and db_mat == mat.lower() and db_taric == proposed_code.lower():
+                                    db_matched.append(True)
+                                    final_codes.append(db_v.get("taric", proposed_code))
+                                    cn_descriptions.append(db_v.get("cn_description", proposed_cn_desc))
+                                    opt_translations.append(db_v.get("optional_translation", proposed_opt_trans))
+                                    statuses.append("🟢 BAZA (Auto-Zaakceptowano)")
+                                    db_images.append(db_v.get("image", ""))
+                                    matched_in_db = True
+                                    break
+                            
+                            if not matched_in_db:
+                                db_matched.append(False)
+                                final_codes.append(proposed_code)
+                                cn_descriptions.append(proposed_cn_desc)
+                                opt_translations.append(proposed_opt_trans)
+                                statuses.append("🟡 Do Weryfikacji AI")
+                                db_images.append("")
+
+                        df_t3["Status Bazy"] = statuses
+                        df_t3["Opcjonalne Tłumaczenie"] = opt_translations
+                        df_t3["Oficjalny Opis CN"] = cn_descriptions
+                        df_t3["Zdjęcie wzorca"] = db_images
+
+                        st.markdown("### 🤖 3A. Propozycje AI i Dopasowania z Wizualnej Bazy")
+                        st.dataframe(df_t3, use_container_width=True, hide_index=True)
+                        st.markdown("---")
+                        st.markdown("### 👨‍💼 3B. Weryfikacja & Akceptacja Agenta Celnego")
+                        st.info("💡 **Wskazówka:** System sprawdza 3 parametry zgodności (`Nazwa + Skład + Kod CN`) z Twoją Bazą Wizualną. Możesz edytować dowolne pole w tabeli poniżej.")
+
+                        if "df_editor" not in proj or not proj["hs_approved"]:
+                            df_editor_init = df_t3.copy()
+                            df_editor_init["Zaakceptowano"] = db_matched
+                            df_editor_init["Ostateczny Kod TARIC"] = final_codes
+                            df_editor_init["Skład Materiałowy"] = [str(r.get("Skład Materiałowy", "")) for _, r in df_t3.iterrows()]
+                            df_editor_init["Opcjonalne Tłumaczenie"] = opt_translations
+                            df_editor_init["Oficjalny Opis CN"] = cn_descriptions
+                            df_editor_init["Uwagi Agenta"] = ["Potwierdzono z Bazy (3 parametry)" if m else "Do weryfikacji" for m in db_matched]
+                        else:
+                            df_editor_init = pd.DataFrame(proj["hs_approved"])
+
+                        edited_df = st.data_editor(df_editor_init, use_container_width=True, hide_index=True, num_rows="dynamic", key=f"editor_{cur_no}")
+
+                        st.markdown("---")
+                        upload_db_img = st.file_uploader("📷 Wgraj zdjęcie referencyjne dla tych pozycji do bazy (opcjonalnie)", type=["jpg", "jpeg", "png"], key=f"img_up_{cur_no}")
+
+                        if st.button("💾 Zatwierdź Kody HS dla Urzędu Celnego i Zapisz do Bazy", type="primary"):
+                            records = edited_df.to_dict(orient="records")
+                            proj["hs_approved"] = records
+                            save_project(cur_no, proj)
+                            added = update_hs_database_from_records(records, upload_db_img)
+                            st.success(f"✅ Zatwierdzono! Dodano/zaktualizowano {added} wzorców w Wizualnej Bazie (wg 3 parametrów).")
+                            st.rerun()
+
+                        if proj.get("hs_approved"):
+                            st.markdown("---")
+                            st.success("🔒 **Dokumentacja gotowa do PUESC / Huzar**")
+                            df_approved = pd.DataFrame(proj["hs_approved"])
+                            out_final_excel = BytesIO()
+                            with pd.ExcelWriter(out_final_excel, engine='openpyxl') as writer:
+                                df_approved.to_excel(writer, index=False, sheet_name='HS_CODE_APPROVED')
+                            st.download_button("🏛️️ Pobierz Zgodę Celną Excel (.xlsx)", data=out_final_excel.getvalue(), file_name=f"HS_APPROVED_{cur_no}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Błąd parsowania taryfikacji: {str(e)}")
