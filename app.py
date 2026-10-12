@@ -204,6 +204,8 @@ def process_excel_all_sheets(f_bytes):
         combined_str = ""
         for sheet_name in xl.sheet_names:
             df_sheet = xl.parse(sheet_name)
+            if len(df_sheet) > 1000:
+                df_sheet = df_sheet.head(1000)
             combined_str += f"\n=== ZAKŁADKA / ARKUSZ: {sheet_name} ===\n" + df_sheet.to_string() + "\n"
         return combined_str
     except Exception:
