@@ -507,53 +507,56 @@ def generate_formal_pdf_report(container_no, markdown_content):
 
 def generate_cbam_pdf_report(company_name, markdown_content):
     if not FPDF_AVAILABLE: return None
-    pdf = CBAMCustomPDF()
-    pdf.set_margins(12, 12, 12)
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.set_fill_color(235, 248, 255)
-    pdf.set_draw_color(49, 130, 206)
-    pdf.rect(12, 26, 186, 10, style='DF')
-    pdf.set_xy(14, 28)
-    pdf.set_font('Helvetica', 'B', 9)
-    pdf.set_text_color(44, 82, 130)
-    clean_meta = f'FIRMA: {company_name} | RAPORT SPRAWOZDAWCZY CBAM'
-    pdf.cell(0, 6, clean_meta.encode('latin-1', 'replace').decode('latin-1'), ln=1)
-    pdf.ln(6)
-    
-    safe_content = str(markdown_content).encode('latin-1', 'ignore').decode('latin-1')
-    lines = safe_content.split('\n')
-    
-    for line in lines:
-        clean_line = line.strip()
-        if not clean_line:
-            pdf.ln(2)
-            continue
-        if clean_line.startswith('###') or clean_line.startswith('##') or clean_line.startswith('#'):
-            pdf.ln(3)
-            pdf.set_font('Helvetica', 'B', 10)
-            pdf.set_text_color(44, 82, 130)
-            txt = clean_line.replace('#', '').strip()
-            pdf.multi_cell(186, 5, txt)
-            pdf.ln(1)
-            pdf.set_font('Helvetica', '', 9)
-            pdf.set_text_color(45, 55, 72)
-        elif clean_line.startswith('-') or clean_line.startswith('*'):
-            pdf.set_font('Helvetica', '', 9)
-            pdf.set_text_color(45, 55, 72)
-            text = clean_line[1:].strip()
-            text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
-            pdf.multi_cell(186, 4.5, f' - {text}')
-        else:
-            pdf.set_font('Helvetica', '', 9)
-            pdf.set_text_color(45, 55, 72)
-            text = re.sub(r'\*\*(.*?)\*\*', r'\1', clean_line)
-            pdf.multi_cell(186, 4.5, text)
-            
     try:
-        return bytes(pdf.output(dest='S'))
+        pdf = CBAMCustomPDF()
+        pdf.set_margins(12, 12, 12)
+        pdf.add_page()
+        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.set_fill_color(235, 248, 255)
+        pdf.set_draw_color(49, 130, 206)
+        pdf.rect(12, 26, 186, 10, style='DF')
+        pdf.set_xy(14, 28)
+        pdf.set_font('Helvetica', 'B', 9)
+        pdf.set_text_color(44, 82, 130)
+        clean_meta = f'FIRMA: {company_name} | RAPORT SPRAWOZDAWCZY CBAM'
+        pdf.cell(0, 6, clean_meta.encode('latin-1', 'replace').decode('latin-1'), ln=1)
+        pdf.ln(6)
+        
+        safe_content = str(markdown_content).encode('latin-1', 'ignore').decode('latin-1')
+        lines = safe_content.split('\n')
+        
+        for line in lines:
+            clean_line = line.strip()
+            if not clean_line:
+                pdf.ln(2)
+                continue
+            if clean_line.startswith('###') or clean_line.startswith('##') or clean_line.startswith('#'):
+                pdf.ln(3)
+                pdf.set_font('Helvetica', 'B', 10)
+                pdf.set_text_color(44, 82, 130)
+                txt = clean_line.replace('#', '').strip()
+                pdf.multi_cell(186, 5, txt)
+                pdf.ln(1)
+                pdf.set_font('Helvetica', '', 9)
+                pdf.set_text_color(45, 55, 72)
+            elif clean_line.startswith('-') or clean_line.startswith('*'):
+                pdf.set_font('Helvetica', '', 9)
+                pdf.set_text_color(45, 55, 72)
+                text = clean_line[1:].strip()
+                text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
+                pdf.multi_cell(186, 4.5, f' - {text}')
+            else:
+                pdf.set_font('Helvetica', '', 9)
+                pdf.set_text_color(45, 55, 72)
+                text = re.sub(r'\*\*(.*?)\*\*', r'\1', clean_line)
+                pdf.multi_cell(186, 4.5, text)
+                
+        pdf_bytes = pdf.output(dest='S')
+        if isinstance(pdf_bytes, str):
+            return pdf_bytes.encode('latin-1', 'replace')
+        return bytes(pdf_bytes)
     except Exception:
-        return b""
+        return None
 
 def call_ai_chunked_stage2(client, model_name, base_prompt, full_dataframe_text):
     lines = full_dataframe_text.strip().split('\n')
@@ -857,7 +860,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                             "Oto surowe dane wyciągnięte ze wszystkich wgranych niemieckich odpraw celnych i dokumentów:\n"
                             f"{' '.join(all_extracted_rows)}\n\n"
                             "BEZWZGLĘDNE ZASADY MATEMATYCZNE (ZAKAZ HALUCYNACJI I ZAOKRĄGLEŃ):\n"
-                            "1. **Zero domysłów i zero sztucznych ton**: Zabrania się dowiązywania, szacowania lub dodawania jakichkolwiek 'marginesów błędu' (w tym wymyślonych 10 ton). Masz zsumować wyłącznie to, co fizycznie znajduje się w kolumnach mas netto w plikach źródłowych.\n"
+                            "1. **Zero domysłów i zero sztucznych ton**: Zabrania się dowiązywania, szacowania lub dodawania jakichkolwiek 'marginesów błędu'. Masz zsumować wyłącznie to, co fizycznie znajduje się w kolumnach mas netto w plikach źródłowych.\n"
                             "2. **Dokładność co do kilograma**: Zsumuj dokładną masę netto (Netto-Masse / Eigenmasse) dla każdej pozycji w kilogramach, a następnie przelicz na tony z dokładnością do dwóch miejsc po przecinku.\n"
                             f"3. W nagłówku raportu wpisz bezwzględnie dzisiejszą datę: {dzisiejsza_data}.\n"
                             "4. **Stwórz szczegółową tabelę wyszczególniającą wyłącznie pozycje towarowe objęte CBAM** (kolumny: [Nazwa Towaru | Kod TARIC/CN | Dokładna Masa Netto (kg) | Kategoria CBAM]).\n"
@@ -880,9 +883,23 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
             st.markdown(f"### 📋 Wynik Niezależnego Audytu CBAM dla Firmy: {st.session_state.current_company}")
             st.markdown(st.session_state.cbam_indep_result)
             st.markdown("---")
-            if FPDF_AVAILABLE:
-                cbam_indep_pdf_bytes = generate_cbam_pdf_report(st.session_state.current_company, st.session_state.cbam_indep_result)
-                st.download_button("📄 Pobierz Niezależny Raport CBAM (Etap 2) w formacie PDF", data=cbam_indep_pdf_bytes, file_name=f"Raport_CBAM_Etap2_{st.session_state.current_company}.pdf", mime="application/pdf", use_container_width=True)
+            
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                if FPDF_AVAILABLE:
+                    cbam_indep_pdf_bytes = generate_cbam_pdf_report(st.session_state.current_company, st.session_state.cbam_indep_result)
+                    if cbam_indep_pdf_bytes:
+                        st.download_button("📄 Pobierz Raport CBAM (PDF)", data=cbam_indep_pdf_bytes, file_name=f"Raport_CBAM_Etap2_{st.session_state.current_company}.pdf", mime="application/pdf", use_container_width=True)
+                    else:
+                        st.info("💡 Użyj poniższego przycisku Markdown, jeśli PDF napotka ograniczenia znaków.")
+            with col_d2:
+                st.download_button(
+                    "📥 Pobierz Pełny Raport (Format Markdown / Tekst)",
+                    data=st.session_state.cbam_indep_result.encode('utf-8'),
+                    file_name=f"Raport_CBAM_Etap2_{st.session_state.current_company}.md",
+                    mime="text/markdown",
+                    use_container_width=True
+                )
 
 # ==============================================================================
 # MODUŁ 3: WIZUALNA BAZA KODÓW HS
