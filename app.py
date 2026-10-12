@@ -25,7 +25,7 @@ except ImportError:
 
 st.set_page_config(page_title="Genius AI BOT | Huzar Intrastat & CBAM", page_icon="🚢", layout="wide")
 
-# Bezpieczne pobranie klucza z sekretów Streamlita (zakładka Settings -> Secrets w Streamlit Cloud)
+# Bezpieczne pobranie klucza z sekretów Streamlita
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
 except Exception:
@@ -228,7 +228,6 @@ def process_excel_all_sheets(f_bytes, filename="plik.xls"):
     try:
         ext = filename.split(".")[-1].lower()
         if ext == "xls":
-            # Dla starych plików .xls próbujemy silnika xlrd, a w razie braku parsujemy jako zwykły tekst/tabelę
             try:
                 xl = pd.ExcelFile(BytesIO(f_bytes), engine='xlrd')
             except Exception:
@@ -244,7 +243,6 @@ def process_excel_all_sheets(f_bytes, filename="plik.xls"):
             combined_str += f"\n=== ZAKŁADKA / ARKUSZ: {sheet_name} ===\n" + df_sheet.to_string() + "\n"
         return combined_str
     except Exception as e:
-        # Awaryjny odczyt jako zwykły tekst, gdyby biblioteki Excela zawiodły
         try:
             return f_bytes.decode('utf-8', errors='ignore')
         except Exception:
@@ -651,7 +649,6 @@ st.sidebar.markdown("Enterprise Logistics Platform")
 
 st.sidebar.markdown("---")
 
-# GLOBALNY WYBÓR FIRMY (Krzyżowy dla całej aplikacji)
 st.sidebar.markdown("### 🏢 Globalny Wybór Firmy")
 new_comp = st.sidebar.text_input("Nazwa Nowej Firmy", placeholder="np. Firma XYZ").strip()
 if st.sidebar.button("+ Dodaj Firmę", use_container_width=True):
@@ -807,13 +804,15 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                         
                         progress_bar = st.progress(0)
                         total_files = len(st.session_state.cbam_independent_docs)
+                        status_text = st.empty()
                         
                         for idx, f in enumerate(st.session_state.cbam_independent_docs):
+                            status_text.text(f"Przetwarzanie pliku {idx+1} z {total_files}: {f.name}...")
                             f_bytes = f.getvalue()
                             ext = f.name.split(".")[-1].lower()
                             
                             file_contents_prompt = (
-                                f"Jesteś precyzyjnym audytorem celnym CBAM. Analizujesz dokument/kontener nr {idx+1} ({f.name}) dla firmy: {st.session_state.current_company}.\n"
+                                f"Jesteś precyzyjnym audytorem celnym CBAM. Analizujesz plik {f.name} dla firmy: {st.session_state.current_company}.\n"
                                 "Przeanalizuj te dane i wyciągnij wszystkie pozycje towarowe w formacie CSV ze średnikami (;):\n"
                                 "Nazwa_Produktu; Kod_TARIC; Masa_Netto_KG; Czy_CBAM_TAK_NIE; Kategoria_CBAM"
                             )
@@ -841,6 +840,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                                 
                             progress_bar.progress((idx + 1) / total_files)
 
+                        status_text.text("Generowanie ostatecznego raportu i podziału na materiały CBAM...")
                         summary_prompt = (
                             f"Jesteś głównym biegłym ds. CBAM dla firmy: {st.session_state.current_company}.\n"
                             "Oto zsumowane dane wyciągnięte ze wszystkich wgranych plików i kontenerów:\n"
@@ -852,10 +852,11 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                             "4. Przygotuj profesjonalny raport w formacie Markdown z wyraźnym podziałem na sekcję ogólną oraz osobną, dedykowaną sekcję dla materiałów CBAM."
                         )
 
-                        with st.spinner("Generowanie ostatecznego raportu i podziału na materiały CBAM..."):
-                            final_res = safe_generate_content(client, selected_model, [summary_prompt])
-                            st.session_state.cbam_indep_result = final_res.text
-                            st.success("✅ Pomyślnie przeanalizowano wszystkie pliki i wygenerowano raport CBAM!")
+                        final_res = safe_generate_content(client, selected_model, [summary_prompt])
+                        st.session_state.cbam_indep_result = final_res.text
+                        status_text.empty()
+                        progress_bar.empty()
+                        st.success("✅ Pomyślnie przeanalizowano wszystkie pliki i wygenerowano raport CBAM!")
                     except Exception as e:
                         st.error(f"Błąd podczas audytu: {str(e)}")
 
