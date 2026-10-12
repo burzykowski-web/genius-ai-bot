@@ -107,8 +107,7 @@ def save_uploaded_files(company_name, container_no, uploaded_files):
     for f in uploaded_files:
         try:
             f_bytes = f.getvalue()
-            if not f_bytes:
-                continue
+            if not f_bytes: continue
             if f.name.lower().endswith(".zip"):
                 with zipfile.ZipFile(BytesIO(f_bytes)) as z:
                     for filename in z.namelist():
@@ -473,7 +472,15 @@ def generate_formal_pdf_report(container_no, markdown_content):
             text = re.sub(r'\*\*(.*?)\*\*', r'\1', clean_line)
             txt = text.encode('latin-1', 'replace').decode('latin-1')
             pdf.multi_cell(186, 4.5, txt)
-    return pdf.output()
+    
+    # Bezpieczne zwracanie bajtów PDF przez wywołanie output(dest='S').encode('latin1')
+    try:
+        pdf_output = pdf.output(dest='S')
+        if isinstance(pdf_output, str):
+            return pdf_output.encode('latin-1', 'replace')
+        return pdf_output
+    except Exception:
+        return bytes(pdf.output())
 
 def generate_cbam_pdf_report(company_name, markdown_content):
     if not FPDF_AVAILABLE: return None
@@ -520,7 +527,14 @@ def generate_cbam_pdf_report(company_name, markdown_content):
             text = re.sub(r'\*\*(.*?)\*\*', r'\1', clean_line)
             txt = text.encode('latin-1', 'replace').decode('latin-1')
             pdf.multi_cell(186, 4.5, txt)
-    return pdf.output()
+            
+    try:
+        pdf_output = pdf.output(dest='S')
+        if isinstance(pdf_output, str):
+            return pdf_output.encode('latin-1', 'replace')
+        return pdf_output
+    except Exception:
+        return bytes(pdf.output())
 
 def call_ai_chunked_stage2(client, model_name, base_prompt, full_dataframe_text):
     lines = full_dataframe_text.strip().split('\n')
@@ -659,7 +673,7 @@ st.sidebar.markdown("---")
 # ==============================================================================
 if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
     st.title("🇪🇺 Moduł CBAM — Unijny Mechanizm Dostosowywania Cen na Granicach")
-    st.caption("Obliczanie wag i asortymentu podlegającego pod dyrektywę CBAM na podstawie taryfikacji oraz niezależna weryfikacja z własnoręcznie wgranych dokumentów.")
+    st.caption("Obliczanie wag, weryfikacja progu 50 ton rocznie oraz audyt asortymentu podlegającego pod dyrektywę CBAM.")
 
     if not st.session_state.current_company:
         st.warning("⚠️ Najpierw dodaj i wybierz firmę w panelu bocznym!")
@@ -699,7 +713,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                         "Jesteś ekspertem ds. CBAM w unijnej agencji celnej.\n"
                         "Oto zatwierdzone pozycje towarowe dla kontenera:\n"
                         f"{json.dumps(recs, ensure_ascii=False, indent=2)}\n\n"
-                        "Przeanalizuj każdy kod TARIC / HS pod kątem objętości unijnym rozporządzeniem CBAM (stal, żelazo, aluminium, nawozy, wodór, energia elektryczna).\n"
+                        "Przeanalizuj każdy kod TARIC / HS pod kątem unijnego rozporządzenia CBAM (stal, żelazo, aluminium, nawozy, wodór, energia elektryczna).\n"
                         "Dla każdej pozycji określ czy podlega pod CBAM (TAK / NIE), podaj kategorię CBAM oraz oszacuj masę netto podlegającą pod dyrektywę.\n"
                         "Zwróć wynik w przejrzystej tabeli Markdown z kolumnami: [Nazwa Produktu | Kod TARIC | Masa Netto (kg) | Czy CBAM? | Kategoria CBAM | Uwagi]."
                     )
@@ -719,8 +733,8 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                         st.download_button("📄 Pobierz Raport CBAM (Etap 1) w formacie PDF", data=cbam_pdf_bytes, file_name=f"Raport_CBAM_Etap1_{cur_comp}_{selected_cbam_cont}.pdf", mime="application/pdf", use_container_width=True)
 
     else:
-        st.subheader("🔍 Etap 2: Niezależny Audyt i Wyliczenie CBAM z Własnych Dokumentów Źródłowych")
-        st.info(f"Wgraj niezależne pliki handlowe lub odprawę celną dla aktywnej firmy: **{st.session_state.current_company}**.")
+        st.subheader("🔍 Etap 2: Niezależny Audyt i Weryfikacja Progu 50 Ton CBAM z Własnych Dokumentów")
+        st.info(f"Wgraj niezależne pliki handlowe lub odprawę celną dla aktywnej firmy: **{st.session_state.current_company}**. System zsumuje masę i sprawdzi próg zwolnienia *de minimis* (50 ton rocznie).")
 
         if "cbam_independent_docs" not in st.session_state:
             st.session_state.cbam_independent_docs = []
@@ -763,7 +777,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
         if st.session_state.cbam_independent_docs:
             st.write("📂 **Załączone niezależnie pliki:** " + ", ".join([d.name for d in st.session_state.cbam_independent_docs]))
 
-            if st.button("🚀 Uruchom Niezależny Audyt CBAM z Wgranych Plików", type="primary", use_container_width=True):
+            if st.button("🚀 Uruchom Niezależny Audyt CBAM i Sprawdź Próg 50 Ton", type="primary", use_container_width=True):
                 if not api_key:
                     st.error("Wpisz klucz API Gemini w panelu bocznym.")
                 elif not st.session_state.current_company:
@@ -774,11 +788,10 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                         prompt_cbam_indep_audit = (
                             f"Jesteś niezależnym biegłym ds. audytu celnego i sprawozdawczości CBAM dla firmy: {st.session_state.current_company}.\n"
                             "Przeanalizuj poniższe dane źródłowe ze wszystkich wgranych dokumentów i zakładek Excel:\n"
-                            "Dokonaj niezależnego wyliczenia:\n"
-                            "1. Wskaź towary objęte unijnym rozporządzeniem CBAM (stal, żelazo, aluminium, nawozy itp.).\n"
-                            "2. Sprawdź i porównaj masy netto dla tych pozycji w dokumentach źródłowych.\n"
-                            "3. Stwórz szczegółową tabelę z niezależnym wyliczeniem mas netto oraz udziałem w sprawozdawczości CBAM.\n"
-                            "4. Podaj wnioski i zalecenia dla celów deklaracyjnych."
+                            "1. Zidentyfikuj pozycje towarowe objęte unijnym rozporządzeniem CBAM (stal, żelazo, aluminium, nawozy itp.).\n"
+                            "2. Dokładnie zsumuj i wylicz łączną masę netto (w kg oraz tonach) towarów CBAM w dostarczonych dokumentach.\n"
+                            "3. Sprawdź, czy łączna masa przekracza ustawowy próg roczny de minimis wynoszący 50 ton.\n"
+                            "4. Stwórz szczegółową tabelę z podziałem na produkty, kody TARIC oraz masy netto, a na końcu sformułuj jednoznaczny wniosek: czy firma przekracza próg 50 ton (TAK / NIE) i jakie ma obowiązki sprawozdawcze."
                         )
                         contents = [prompt_cbam_indep_audit]
                         for f in st.session_state.cbam_independent_docs:
@@ -797,7 +810,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                             elif ext == "png":
                                 contents.append(types.Part.from_bytes(data=f_bytes, mime_type="application/png"))
 
-                        with st.spinner(f"Niezależna analiza wgranych dokumentów dla firmy {st.session_state.current_company}..."):
+                        with st.spinner(f"Niezależna analiza wgranych dokumentów i liczenie progu 50 ton dla firmy {st.session_state.current_company}..."):
                             res_indep = safe_generate_content(client, selected_model, contents)
                             st.session_state.cbam_indep_result = res_indep.text
                             st.success("✅ Niezależny audyt CBAM zakończony pomyślnie!")
