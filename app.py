@@ -751,7 +751,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
 
     else:
         st.subheader("🔍 Etap 2: Błyskawiczny Audyt Równoległy i Weryfikacja Progu 50 Ton CBAM")
-        st.info(f"Wgraj pliki handlowe lub odprawy celne dla aktywnej firmy: **{st.session_state.current_company}**. System przetworzy wszystkie pliki równolegle (błyskawicznie), zsumuje masę netto i wykaże materiały CBAM.")
+        st.info(f"Wgraj pliki handlowe, arkusze Excel (.xls/.xlsx) lub odprawy celne dla aktywnej firmy: **{st.session_state.current_company}**. System przetworzy wszystkie pliki równolegle (błyskawicznie), zsumuje masę netto i wykaże materiały CBAM.")
 
         if "cbam_independent_docs" not in st.session_state:
             st.session_state.cbam_independent_docs = []
@@ -813,8 +813,8 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                                 ext = f_item.name.split(".")[-1].lower()
                                 
                                 file_contents_prompt = (
-                                    f"Jesteś precyzyjnym audytorem celnym CBAM. Analizujesz niemiecką odprawę celną lub dokument {f_item.name} dla firmy: {st.session_state.current_company}.\n"
-                                    "Zwróć uwagę na niemieckie określenia (np. Netto-Masse, Eigenmasse, Rohmasse, Zoll).\n"
+                                    f"Jesteś precyzyjnym audytorem celnym CBAM. Analizujesz plik {f_item.name} (w tym arkusze Excel lub odprawę celną) dla firmy: {st.session_state.current_company}.\n"
+                                    "Zwróć uwagę na niemieckie określenia (np. Netto-Masse, Eigenmasse, Rohmasse, Zoll) oraz nazwy kolumn w plikach Excel.\n"
                                     "Wyciągnij wszystkie pozycje towarowe w formacie CSV ze średnikami (;):\n"
                                     "Nazwa_Produktu; Kod_TARIC; Masa_Netto_KG; Czy_CBAM_TAK_NIE; Kategoria_CBAM"
                                 )
@@ -857,7 +857,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                         summary_prompt = (
                             f"Jesteś głównym biegłym ds. celnych i CBAM dla firmy: {st.session_state.current_company}.\n"
                             f"Oficjalna data sporządzenia raportu to: {dzisiejsza_data}.\n"
-                            "Oto surowe dane wyciągnięte ze wszystkich wgranych niemieckich odpraw celnych i dokumentów:\n"
+                            "Oto surowe dane wyciągnięte ze wszystkich wgranych plików (Excel, PDF i odprawy):\n"
                             f"{' '.join(all_extracted_rows)}\n\n"
                             "BEZWZGLĘDNE ZASADY:\n"
                             "1. Zsumuj masy netto ze wszystkich dokumentów. Pod żadnym pozorem nie zwracaj zerowych wartości ani wzorów LaTeX.\n"
@@ -874,7 +874,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                         
                         status_text.empty()
                         progress_bar.empty()
-                        st.success("✅ Pomyślnie przetworzono odprawy celne równolegle i wygenerowano rzetelny raport CBAM!")
+                        st.success("✅ Pomyślnie przetworzono pliki Excel i odprawy równolegle i wygenerowano rzetelny raport CBAM!")
                     except Exception as e:
                         st.error(f"Błąd podczas audytu: {str(e)}")
 
