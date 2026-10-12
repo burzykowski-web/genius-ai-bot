@@ -224,9 +224,18 @@ def update_hs_database_from_records(records, image_file=None):
         save_hs_database(db)
     return updated_count
 
-def process_excel_all_sheets(f_bytes):
+def process_excel_all_sheets(f_bytes, filename="plik.xls"):
     try:
-        xl = pd.ExcelFile(BytesIO(f_bytes))
+        ext = filename.split(".")[-1].lower()
+        if ext == "xls":
+            # Dla starych plików .xls próbujemy silnika xlrd, a w razie braku parsujemy jako zwykły tekst/tabelę
+            try:
+                xl = pd.ExcelFile(BytesIO(f_bytes), engine='xlrd')
+            except Exception:
+                xl = pd.ExcelFile(BytesIO(f_bytes))
+        else:
+            xl = pd.ExcelFile(BytesIO(f_bytes))
+            
         combined_str = ""
         for sheet_name in xl.sheet_names:
             df_sheet = xl.parse(sheet_name)
@@ -235,7 +244,11 @@ def process_excel_all_sheets(f_bytes):
             combined_str += f"\n=== ZAKŁADKA / ARKUSZ: {sheet_name} ===\n" + df_sheet.to_string() + "\n"
         return combined_str
     except Exception as e:
-        return f"[Błąd odczytu pliku Excel: {str(e)}]"
+        # Awaryjny odczyt jako zwykły tekst, gdyby biblioteki Excela zawiodły
+        try:
+            return f_bytes.decode('utf-8', errors='ignore')
+        except Exception:
+            return f"[Błąd odczytu pliku Excel: {str(e)}]"
 
 def process_intrastat_dataframe(text_data):
     clean_csv = text_data.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
@@ -792,7 +805,6 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                         client = genai.Client(api_key=api_key)
                         all_extracted_rows = []
                         
-                        # Sekwencyjne przetwarzanie każdego pliku z osobna
                         progress_bar = st.progress(0)
                         total_files = len(st.session_state.cbam_independent_docs)
                         
@@ -802,13 +814,13 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                             
                             file_contents_prompt = (
                                 f"Jesteś precyzyjnym audytorem celnym CBAM. Analizujesz dokument/kontener nr {idx+1} ({f.name}) dla firmy: {st.session_state.current_company}.\n"
-                                "Przeanalizuj te dane i wyciągnij wszystkie pozycje towarowe.\n"
-                                "Dla każdej pozycji podaj w formacie CSV: [Nazwa_Produktu; Kod_TARIC; Masa_Netto_KG; Czy_CBAM_TAK_NIE; Kategoria_CBAM]."
+                                "Przeanalizuj te dane i wyciągnij wszystkie pozycje towarowe w formacie CSV ze średnikami (;):\n"
+                                "Nazwa_Produktu; Kod_TARIC; Masa_Netto_KG; Czy_CBAM_TAK_NIE; Kategoria_CBAM"
                             )
                             
                             doc_parts = [file_contents_prompt]
                             if ext in ["xlsx", "xls"]:
-                                excel_text = process_excel_all_sheets(f_bytes)
+                                excel_text = process_excel_all_sheets(f_bytes, f.name)
                                 doc_parts.append(excel_text)
                             elif ext == "pdf":
                                 try:
@@ -829,7 +841,6 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                                 
                             progress_bar.progress((idx + 1) / total_files)
 
-                        # Ostateczne podsumowanie ze wszystkich plików
                         summary_prompt = (
                             f"Jesteś głównym biegłym ds. CBAM dla firmy: {st.session_state.current_company}.\n"
                             "Oto zsumowane dane wyciągnięte ze wszystkich wgranych plików i kontenerów:\n"
@@ -889,7 +900,7 @@ elif app_mode == "🗄️ Wizualna Baza Kodów HS":
                             db_current.update(imported_json)
                             total_imported += len(imported_json)
                     elif ext in ["xlsx", "xls"]:
-                        excel_text = process_excel_all_sheets(f_bytes)
+                        excel_text = process_excel_all_sheets(f_bytes, imp_f.name)
                         prompt_excel_import = (
                             "Jesteś analitykiem celnym. Przeanalizuj poniższe dane z pliku Excel (wszystkie zakładki):\n"
                             f"{excel_text}\n\n"
@@ -1071,7 +1082,7 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
                     f_bytes = f.getvalue()
                     ext = f.name.split(".")[-1].lower()
                     if ext in ["xlsx", "xls"]:
-                        excel_text = process_excel_all_sheets(f_bytes)
+                        excel_text = process_excel_all_sheets(f_bytes, f.name)
                         contents.append(f"\n--- ZAWARTOŚĆ PLIKU EXCEL ({f.name} - wszystkie zakładki) ---\n" + excel_text + "\n")
                     elif ext == "pdf":
                         try:
@@ -1183,7 +1194,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                     f_bytes = f.getvalue()
                     if not f_bytes: continue
                     if f.type == "spreadsheet":
-                        excel_text = process_excel_all_sheets(f_bytes)
+                        excel_text = process_excel_all_sheets(f_bytes, f.name)
                         contents.append(f"\n--- ZAWARTOŚĆ PLIKU EXCEL ({f.name} - wszystkie zakładki) ---\n" + excel_text + "\n")
                     elif f.type == "application/pdf":
                         try:
