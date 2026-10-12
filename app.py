@@ -852,21 +852,20 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                                     all_extracted_rows.append(res_text)
 
                         dzisiejsza_data = datetime.now().strftime("%d.%m.%Y")
-                        status_text.text("Generowanie ostatecznego raportu z rygorystyczną weryfikacją wag...")
+                        status_text.text("Generowanie ostatecznego raportu z precyzyjnym wyliczeniem wag i kosztów...")
                         
                         summary_prompt = (
                             f"Jesteś głównym biegłym ds. celnych i CBAM dla firmy: {st.session_state.current_company}.\n"
                             f"Oficjalna data sporządzenia raportu to: {dzisiejsza_data}.\n"
                             "Oto surowe dane wyciągnięte ze wszystkich wgranych niemieckich odpraw celnych i dokumentów:\n"
                             f"{' '.join(all_extracted_rows)}\n\n"
-                            "BEZWZGLĘDNE ZASADY MATEMATYCZNE (ZAKAZ HALUCYNACJI I ZAOKRĄGLEŃ):\n"
-                            "1. **Zero domysłów i zero sztucznych ton**: Zabrania się dowiązywania, szacowania lub dodawania jakichkolwiek 'marginesów błędu'. Masz zsumować wyłącznie to, co fizycznie znajduje się w kolumnach mas netto w plikach źródłowych.\n"
-                            "2. **Dokładność co do kilograma**: Zsumuj dokładną masę netto (Netto-Masse / Eigenmasse) dla każdej pozycji w kilogramach, a następnie przelicz na tony z dokładnością do dwóch miejsc po przecinku.\n"
+                            "BEZWZGLĘDNE ZASADY MATEMATYCZNE I WYKONAWCZE:\n"
+                            "1. **Zero domysłów i brak zerowych wyników**: Zsumuj precyzyjnie masy netto (Netto-Masse / Eigenmasse) ze wszystkich dokumentów. Pod żadnym pozorem nie zwracaj zerowych wartości ani kodu LaTeX.\n"
+                            "2. **Jawne liczby i wyliczenia**: Podaj ostateczną masę w kilogramach oraz tonach (z dokładnością do dwóch miejsc po przecinku) oraz realnie wyliczony koszt finansowy w EUR w oparciu o ceny EU ETS.\n"
                             f"3. W nagłówku raportu wpisz bezwzględnie dzisiejszą datę: {dzisiejsza_data}.\n"
                             "4. **Stwórz szczegółową tabelę wyszczególniającą wyłącznie pozycje towarowe objęte CBAM** (kolumny: [Nazwa Towaru | Kod TARIC/CN | Dokładna Masa Netto (kg) | Kategoria CBAM]).\n"
                             "5. Podsumuj łączną masę towarów CBAM w kilogramach oraz tonach i jednoznacznie odpowiedz, czy przekroczono próg zwolnienia de minimis wynoszący 50 ton rocznie (TAK / NIE).\n"
-                            "6. Dokonaj wyliczenia szacunkowego kosztu finansowego (w EUR) na bazie dokładnych wag i cen EU ETS.\n"
-                            "7. Przygotuj profesjonalny, czytelny raport w formacie Markdown."
+                            "6. Przygotuj profesjonalny, czytelny raport w formacie Markdown."
                         )
 
                         final_res = safe_generate_content(client, selected_model, [summary_prompt])
