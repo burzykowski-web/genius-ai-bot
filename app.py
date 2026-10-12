@@ -741,7 +741,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
 
     else:
         st.subheader("🔍 Etap 2: Niezależny Audyt i Weryfikacja Progu 50 Ton CBAM z Własnych Dokumentów")
-        st.info(f"Wgraj niezależne pliki handlowe lub odprawę celną dla aktywnej firmy: **{st.session_state.current_company}**. System zsumuje masę i sprawdzi próg zwolnienia *de minimis* (50 ton rocznie).")
+        st.info(f"Wgraj niezależne pliki handlowe lub odprawę celną dla aktywnej firmy: **{st.session_state.current_company}**. System przeanalizuje każdy plik z osobna, zsumuje masę i wykaże materiały CBAM w osobnej tabeli.")
 
         if "cbam_independent_docs" not in st.session_state:
             st.session_state.cbam_independent_docs = []
@@ -784,43 +784,69 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
         if st.session_state.cbam_independent_docs:
             st.write("📂 **Załączone niezależnie pliki:** " + ", ".join([d.name for d in st.session_state.cbam_independent_docs]))
 
-            if st.button("🚀 Uruchom Niezależny Audyt CBAM i Sprawdź Próg 50 Ton", type="primary", use_container_width=True):
+            if st.button("🚀 Uruchom Pełny Audyt CBAM dla Wszystkich Plików", type="primary", use_container_width=True):
                 if not st.session_state.current_company:
                     st.error("Wybierz najpierw firmę w panelu bocznym.")
                 else:
                     try:
                         client = genai.Client(api_key=api_key)
-                        prompt_cbam_indep_audit = (
-                            f"Jesteś niezależnym biegłym ds. audytu celnego i sprawozdawczości CBAM dla firmy: {st.session_state.current_company}.\n"
-                            "Przeanalizuj poniższe dane źródłowe ze wszystkich wgranych dokumentów i zakładek Excel:\n"
-                            "1. Zidentyfikuj pozycje towarowe objęte unijnym rozporządzeniem CBAM (stal, żelazo, aluminium, nawozy itp.).\n"
-                            "2. Dokładnie zsumuj i wylicz łączną masę netto (w kg oraz tonach) towarów CBAM w dostarczonych dokumentach.\n"
-                            "3. Sprawdź, czy łączna masa przekracza ustawowy próg roczny de minimis wynoszący 50 ton.\n"
-                            "4. Stwórz szczegółową tabelę z podziałem na produkty, kody TARIC oraz masy netto, a na końcu sformułuj jednoznaczny wniosek: czy firma przekracza próg 50 ton (TAK / NIE) i jakie ma obowiązki sprawozdawcze."
-                        )
-                        contents = [prompt_cbam_indep_audit]
-                        for f in st.session_state.cbam_independent_docs:
+                        all_extracted_rows = []
+                        
+                        # Sekwencyjne przetwarzanie każdego pliku z osobna
+                        progress_bar = st.progress(0)
+                        total_files = len(st.session_state.cbam_independent_docs)
+                        
+                        for idx, f in enumerate(st.session_state.cbam_independent_docs):
                             f_bytes = f.getvalue()
                             ext = f.name.split(".")[-1].lower()
+                            
+                            file_contents_prompt = (
+                                f"Jesteś precyzyjnym audytorem celnym CBAM. Analizujesz dokument/kontener nr {idx+1} ({f.name}) dla firmy: {st.session_state.current_company}.\n"
+                                "Przeanalizuj te dane i wyciągnij wszystkie pozycje towarowe.\n"
+                                "Dla każdej pozycji podaj w formacie CSV: [Nazwa_Produktu; Kod_TARIC; Masa_Netto_KG; Czy_CBAM_TAK_NIE; Kategoria_CBAM]."
+                            )
+                            
+                            doc_parts = [file_contents_prompt]
                             if ext in ["xlsx", "xls"]:
                                 excel_text = process_excel_all_sheets(f_bytes)
-                                contents.append(f"\n--- ZAWARTOŚĆ PLIKU EXCEL ({f.name} - wszystkie zakładki) ---\n" + excel_text + "\n")
+                                doc_parts.append(excel_text)
                             elif ext == "pdf":
                                 try:
-                                    contents.append(types.Part.from_bytes(data=f_bytes, mime_type="application/pdf"))
+                                    doc_parts.append(types.Part.from_bytes(data=f_bytes, mime_type="application/pdf"))
                                 except Exception:
                                     pass
                             elif ext in ["jpg", "jpeg"]:
-                                contents.append(types.Part.from_bytes(data=f_bytes, mime_type="image/jpeg"))
+                                doc_parts.append(types.Part.from_bytes(data=f_bytes, mime_type="image/jpeg"))
                             elif ext == "png":
-                                contents.append(types.Part.from_bytes(data=f_bytes, mime_type="application/png"))
+                                doc_parts.append(types.Part.from_bytes(data=f_bytes, mime_type="application/png"))
+                                
+                            try:
+                                res_file = safe_generate_content(client, selected_model, doc_parts)
+                                if res_file and res_file.text:
+                                    all_extracted_rows.append(f"\n--- PLIK: {f.name} ---\n" + res_file.text)
+                            except Exception as file_err:
+                                st.warning(f"Ostrzeżenie przy pliku {f.name}: {str(file_err)}")
+                                
+                            progress_bar.progress((idx + 1) / total_files)
 
-                        with st.spinner(f"Niezależna analiza wgranych dokumentów i liczenie progu 50 ton dla firmy {st.session_state.current_company}..."):
-                            res_indep = safe_generate_content(client, selected_model, contents)
-                            st.session_state.cbam_indep_result = res_indep.text
-                            st.success("✅ Niezależny audyt CBAM zakończony pomyślnie!")
+                        # Ostateczne podsumowanie ze wszystkich plików
+                        summary_prompt = (
+                            f"Jesteś głównym biegłym ds. CBAM dla firmy: {st.session_state.current_company}.\n"
+                            "Oto zsumowane dane wyciągnięte ze wszystkich wgranych plików i kontenerów:\n"
+                            f"{' '.join(all_extracted_rows)}\n\n"
+                            "Zadanie:\n"
+                            "1. Zbierz i zsumuj masy netto wszystkich towarów ze wszystkich plików.\n"
+                            "2. **Wydziel osobno i stwórz osobną tabelę wyłącznie dla towarów podlegających pod CBAM** (stal, żelazo, aluminium itp.).\n"
+                            "3. Podsumuj łączną masę towarów CBAM w kilogramach oraz tonach i jednoznacznie odpowiedz, czy przekroczono próg zwolnienia de minimis wynoszący 50 ton rocznie (TAK / NIE).\n"
+                            "4. Przygotuj profesjonalny raport w formacie Markdown z wyraźnym podziałem na sekcję ogólną oraz osobną, dedykowaną sekcję dla materiałów CBAM."
+                        )
+
+                        with st.spinner("Generowanie ostatecznego raportu i podziału na materiały CBAM..."):
+                            final_res = safe_generate_content(client, selected_model, [summary_prompt])
+                            st.session_state.cbam_indep_result = final_res.text
+                            st.success("✅ Pomyślnie przeanalizowano wszystkie pliki i wygenerowano raport CBAM!")
                     except Exception as e:
-                        st.error(f"Błąd podczas niezależnego audytu: {str(e)}")
+                        st.error(f"Błąd podczas audytu: {str(e)}")
 
         if "cbam_indep_result" in st.session_state and st.session_state.cbam_indep_result:
             st.markdown("---")
