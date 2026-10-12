@@ -27,7 +27,6 @@ except ImportError:
 
 st.set_page_config(page_title="Genius AI BOT | Huzar Intrastat & CBAM", page_icon="🚢", layout="wide")
 
-# Bezpieczne pobranie klucza z sekretów Streamlita
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
 except Exception:
@@ -521,19 +520,20 @@ def generate_cbam_pdf_report(company_name, markdown_content):
     clean_meta = f'FIRMA: {company_name} | RAPORT SPRAWOZDAWCZY CBAM'
     pdf.cell(0, 6, clean_meta.encode('latin-1', 'replace').decode('latin-1'), ln=1)
     pdf.ln(6)
-    lines = markdown_content.split('\n')
+    
+    safe_content = str(markdown_content).encode('latin-1', 'ignore').decode('latin-1')
+    lines = safe_content.split('\n')
+    
     for line in lines:
         clean_line = line.strip()
         if not clean_line:
             pdf.ln(2)
             continue
-        clean_line = re.sub(r'[^\x00-\x7F\xC0-\xFF]', '', clean_line).strip()
-        if not clean_line: continue
-        if clean_line.startswith('###'):
+        if clean_line.startswith('###') or clean_line.startswith('##') or clean_line.startswith('#'):
             pdf.ln(3)
             pdf.set_font('Helvetica', 'B', 10)
             pdf.set_text_color(44, 82, 130)
-            txt = clean_line.replace('###', '').strip().encode('latin-1', 'replace').decode('latin-1')
+            txt = clean_line.replace('#', '').strip()
             pdf.multi_cell(186, 5, txt)
             pdf.ln(1)
             pdf.set_font('Helvetica', '', 9)
@@ -543,22 +543,17 @@ def generate_cbam_pdf_report(company_name, markdown_content):
             pdf.set_text_color(45, 55, 72)
             text = clean_line[1:].strip()
             text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
-            txt = f' - {text}'.encode('latin-1', 'replace').decode('latin-1')
-            pdf.multi_cell(186, 4.5, txt)
+            pdf.multi_cell(186, 4.5, f' - {text}')
         else:
             pdf.set_font('Helvetica', '', 9)
             pdf.set_text_color(45, 55, 72)
             text = re.sub(r'\*\*(.*?)\*\*', r'\1', clean_line)
-            txt = text.encode('latin-1', 'replace').decode('latin-1')
-            pdf.multi_cell(186, 4.5, txt)
+            pdf.multi_cell(186, 4.5, text)
             
     try:
-        pdf_output = pdf.output(dest='S')
-        if isinstance(pdf_output, str):
-            return pdf_output.encode('latin-1', 'replace')
-        return pdf_output
+        return bytes(pdf.output(dest='S'))
     except Exception:
-        return bytes(pdf.output())
+        return b""
 
 def call_ai_chunked_stage2(client, model_name, base_prompt, full_dataframe_text):
     lines = full_dataframe_text.strip().split('\n')
