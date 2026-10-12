@@ -23,7 +23,7 @@ try:
 except ImportError:
     FPDF_AVAILABLE = False
 
-st.set_page_config(page_title="Genius AI BOT | Huzar Intrastat", page_icon="🚢", layout="wide")
+st.set_page_config(page_title="Genius AI BOT | Huzar Intrastat & CBAM", page_icon="🚢", layout="wide")
 
 DATA_DIR = "projects_data"
 DB_FILE = os.path.join(DATA_DIR, "hs_database_v3.json")
@@ -57,7 +57,7 @@ def load_projects():
         proj_dir = os.path.join(DATA_DIR, proj_name)
         if os.path.isdir(proj_dir) and proj_name != "db_images":
             json_path = os.path.join(proj_dir, "data.json")
-            data = {"out1": "", "out2": "", "out3": "", "calc_audit": "", "docs": [], "hs_approved": []}
+            data = {"out1": "", "out2": "", "out3": "", "calc_audit": "", "docs": [], "hs_approved": [], "cbam_data": ""}
             if os.path.exists(json_path):
                 try:
                     with open(json_path, "r", encoding="utf-8") as f:
@@ -84,7 +84,8 @@ def save_project(proj_name, data):
         "out2": data.get("out2", ""),
         "out3": data.get("out3", ""),
         "calc_audit": data.get("calc_audit", ""),
-        "hs_approved": data.get("hs_approved", [])
+        "hs_approved": data.get("hs_approved", []),
+        "cbam_data": data.get("cbam_data", "")
     }
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(save_data, f, ensure_ascii=False, indent=2)
@@ -248,6 +249,8 @@ def generate_huzarfaktury_xml(df):
     root = ET.Element("TFakturyHS")
     for _, row in df.iterrows():
         faktura = ET.SubElement(root, "Faktura")
+        rodzaj_elem = ET.SubElement(faktura, "RodzajDokumentu")
+        rodzaj_elem.text = "WDT"
         for col in df.columns:
             val = str(row[col]) if pd.notna(row[col]) else ""
             child = ET.SubElement(faktura, col)
@@ -488,14 +491,119 @@ selected_model = st.sidebar.selectbox("Model API", ["gemini-3.6-flash"])
 st.sidebar.markdown("---")
 app_mode = st.sidebar.radio(
     "📌 Wybierz Moduł Pracy:",
-    ["🚢 Odprawy i Taryfikacja Kontenerów", "📦 Dedykowany Generator INTRASTAT (Huzar)", "🗄️ Wizualna Baza Kodów HS"]
+    [
+        "🚢 Odprawy i Taryfikacja Kontenerów", 
+        "📦 Dedykowany Generator INTRASTAT (Huzar)", 
+        "🗄️ Wizualna Baza Kodów HS",
+        "🇪🇺 Moduł CBAM (Kalkulator Emisji)"
+    ]
 )
 st.sidebar.markdown("---")
 
 # ==============================================================================
+# MODUŁ 4: CBAM (KALKULATOR WAG I EMISJI)
+# ==============================================================================
+if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
+    st.title("🇪🇺 Moduł CBAM — Unijny Mechanizm Dostosowywania Cen na Granicach")
+    st.caption("Obliczanie wag i asortymentu podlegającego pod dyrektywę CBAM na podstawie taryfikacji oraz weryfikacja z dokumentów źródłowych.")
+
+    cbam_tab = st.radio(
+        "Wybierz Etap CBAM",
+        ["📊 Etap 1: Kalkulator z Taryfikacji i Wag (Na bazie Etapu 1/3 kontenerów)", "🔍 Etap 2: Niezależna Weryfikacja z Dokumentów i Odprawy"],
+        horizontal=True
+    )
+    st.markdown("---")
+
+    if cbam_tab == "📊 Etap 1: Kalkulator z Taryfikacji i Wag (Na bazie Etapu 1/3 kontenerów)":
+        st.subheader("📊 Etap 1: Przesiew i Kalkulacja Wagi CBAM z Zatwierdzonego Kontenera")
+        st.info("Ten etap korzysta z zatwierdzonych kodów HS oraz mas z aktywnego kontenera, aby wskazać towary objęte CBAM (stal, aluminium, nawozy itp.).")
+
+        if not st.session_state.current_container:
+            st.warning("⚠️ Najpierw wybierz lub stwórz kontener w module głównym i przeprowadź taryfikację!")
+        else:
+            cur_con = st.session_state.current_container
+            proj_data = st.session_state.projects[cur_con]
+            
+            if not proj_data.get("hs_approved"):
+                st.warning(f"⚠️ Brak zatwierdzonych kodów HS dla kontenera `{cur_con}`. Przejdź do modulu kontenerów i zatwierdź kody w Etapie 3.")
+            else:
+                df_approved = pd.DataFrame(proj_data["hs_approved"])
+                st.markdown(f"**Aktywny kontener:** `{cur_con}` | Liczba pozycji w bazie zatwierdzonych: `{len(df_approved)}`")
+
+                if st.button("⚡ Uruchom Analizę i Kalkulację Wagi CBAM (Etap 1)", type="primary"):
+                    client = genai.Client(api_key=api_key)
+                    recs = df_approved.to_dict(orient="records")
+                    prompt_cbam_e1 = (
+                        "Jesteś ekspertem ds. CBAM w unijnej agencji celnej.\n"
+                        "Oto zatwierdzone pozycje towarowe dla kontenera:\n"
+                        f"{json.dumps(recs, ensure_ascii=False, indent=2)}\n\n"
+                        "Przeanalizuj każdy kod TARIC / HS pod kątem objętości unijnym rozporządzeniem CBAM (stal, żelazo, aluminium, nawozy, wodór, energia elektryczna).\n"
+                        "Dla każdej pozycji określ czy podlega pod CBAM (TAK / NIE), podaj kategorię CBAM oraz oszacuj masę netto podlegającą pod dyrektywę.\n"
+                        "Zwróć wynik w przejrzystej tabeli Markdown z kolumnami: [Nazwa Produktu | Kod TARIC | Masa Netto (kg) | Czy CBAM? | Kategoria CBAM | Uwagi]."
+                    )
+                    with st.spinner("Analiza kodów i wyliczanie wag CBAM..."):
+                        res_cbam1 = safe_generate_content(client, selected_model, prompt_cbam_e1)
+                        proj_data["cbam_data"] = res_cbam1.text
+                        save_project(cur_con, proj_data)
+                        st.success("✅ Analiza Etapu 1 zakończona pomyślnie!")
+                        st.rerun()
+
+                if proj_data.get("cbam_data"):
+                    st.markdown("### 📋 Wynik Analizy CBAM (Etap 1)")
+                    st.markdown(proj_data["cbam_data"])
+
+    else:
+        st.subheader("🔍 Etap 2: Niezależny Audyt i Wyliczenie CBAM z Dokumentów Źródłowych")
+        st.info("Ten etap niezależnie analizuje wgrane pliki (fakturę, packing listę oraz odprawę chińską / 报关单), weryfikuje masy i wylicza udziały CBAM dla konkretnego przypadku.")
+
+        if not st.session_state.current_container:
+            st.warning("⚠️ Najpierw wybierz kontener posiadający załączone dokumenty w module głównym!")
+        else:
+            cur_con = st.session_state.current_container
+            proj_data = st.session_state.projects[cur_con]
+
+            if not proj_data.get("docs"):
+                st.warning("⚠️ Brak załączonych dokumentów w wybranym kontenerze.")
+            else:
+                if st.button("🚀 Uruchom Niezależny Audyt CBAM z Dokumentów (Etap 2)", type="primary"):
+                    client = genai.Client(api_key=api_key)
+                    prompt_cbam_e2 = (
+                        "Jesteś niezależnym biegłym ds. audytu celnego i sprawozdawczości CBAM.\n"
+                        "Przeanalizuj wszystkie załączone dokumenty (Commercial Invoice, Packing List, Odprawę Chińską / 报关单).\n"
+                        "Dokonaj niezależnego wyliczenia:\n"
+                        "1. Znajdź towary podlegające pod CBAM (stal, żelazo, aluminium itp.).\n"
+                        "2. Porównaj masy netto między fakturą a packing listą / odprawą.\n"
+                        "3. Stwórz tabelę z niezależnym wyliczeniem mas wbudowanych i wag dla celów sprawozdawczych CBAM.\n"
+                        "Przedstaw pełne podsumowanie i wnioski dla importera."
+                    )
+                    contents = [prompt_cbam_e2]
+                    for f in proj_data["docs"]:
+                        if f.type == "spreadsheet":
+                            try:
+                                df_temp = pd.read_excel(BytesIO(f.getvalue()), sheet_name=0)
+                                contents.append(f"\n--- EXCEL ({f.name}) ---\n" + df_temp.to_string() + "\n")
+                            except Exception:
+                                pass
+                        elif f.type == "application/pdf":
+                            contents.append(types.Part.from_bytes(data=f.getvalue(), mime_type="application/pdf"))
+                        elif f.type in ["image/jpeg", "application/png"]:
+                            contents.append(types.Part.from_bytes(data=f.getvalue(), mime_type=f.type))
+
+                    with st.spinner("Niezależne przeliczanie dokumentów i weryfikacja CBAM..."):
+                        res_cbam2 = safe_generate_content(client, selected_model, contents)
+                        proj_data["cbam_audit_result"] = res_cbam2.text
+                        save_project(cur_con, proj_data)
+                        st.success("✅ Niezależny audyt CBAM (Etap 2) zakończony!")
+                        st.rerun()
+
+                if proj_data.get("cbam_audit_result"):
+                    st.markdown("### 📋 Raport Niezależnego Audytu CBAM (Etap 2)")
+                    st.markdown(proj_data["cbam_audit_result"])
+
+# ==============================================================================
 # MODUŁ 3: WIZUALNA BAZA KODÓW HS
 # ==============================================================================
-if app_mode == "🗄️ Wizualna Baza Kodów HS":
+elif app_mode == "🗄️ Wizualna Baza Kodów HS":
     st.title("🗄️ Wizualna Baza Wiedzy (Nazwa + Skład Materiału + Google Translate + Kod CN)")
     st.caption("Przeglądaj, wyszukuj, importuj z plików PDF i zarządzaj wzorcami towarowymi zapamiętanymi przez system.")
 
@@ -694,7 +802,7 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
                     elif ext == "png":
                         contents.append(types.Part.from_bytes(data=f_bytes, mime_type="application/png"))
 
-                with st.spinner("Odczytywanie dokumentów i przygotowanie struktury TFakturyHS dla Huzara..."):
+                with st.spinner("Odczytywanie dokumentów i przygotowanie struktury TFakturyHS z Rodzajem WDT..."):
                     res_intra = safe_generate_content(client, selected_model, contents)
                     df_processed = process_intrastat_dataframe(res_intra.text)
                     st.session_state.df_intra_result = df_processed
@@ -714,7 +822,7 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
         )
         xml_huzar_bytes = generate_huzarfaktury_xml(df_edited_intra)
         st.download_button(
-            label="📥 Pobierz Plik XML (TFakturyHS) pod Huzar WinSAD",
+            label="📥 Pobierz Poprawiony Plik XML (TFakturyHS z WDT) pod Huzar WinSAD",
             data=xml_huzar_bytes,
             file_name=f"FakturyHS_Intrastat_PLN.xml",
             mime="application/xml",
@@ -730,7 +838,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
     if st.sidebar.button("+ Dodaj Kontener", use_container_width=True):
         if new_no:
             if new_no not in st.session_state.projects:
-                st.session_state.projects[new_no] = {"docs": [], "out1": "", "out2": "", "out3": "", "calc_audit": "", "hs_approved": []}
+                st.session_state.projects[new_no] = {"docs": [], "out1": "", "out2": "", "out3": "", "calc_audit": "", "hs_approved": [], "cbam_data": "", "cbam_audit_result": ""}
                 save_project(new_no, st.session_state.projects[new_no])
             st.session_state.current_container = new_no
             st.sidebar.success(f"Aktywowano: {new_no}")
@@ -866,7 +974,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
 
         selected_tab = st.radio(
             "Wybierz Etap Analizy",
-            ["📋 1. Kontrola Formalna i Odprawa Chińska", "🧩 2. Zbijanie Pozycji", "🏷️️ 3. Taryfikacja & Weryfikacja Agenta"],
+            ["📋 1. Kontrola Formalna i Odprawa Chińska", "🧩 2. Zbijanie Pozycji", "🏷️ 3. Taryfikacja & Weryfikacja Agenta"],
             horizontal=True
         )
 
