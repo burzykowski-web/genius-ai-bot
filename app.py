@@ -25,6 +25,18 @@ except ImportError:
 
 st.set_page_config(page_title="Genius AI BOT | Huzar Intrastat & CBAM", page_icon="🚢", layout="wide")
 
+# Bezpieczne pobranie klucza z sekretów Streamlita (zakładka Settings -> Secrets w Streamlit Cloud)
+try:
+    api_key = st.secrets["GEMINI_API_KEY"]
+except Exception:
+    api_key = ""
+
+if not api_key:
+    st.error("⚠️ Brak skonfigurowanego klucza API w ustawieniach aplikacji (Secrets). Dodaj GEMINI_API_KEY w ustawieniach Streamlit Cloud.")
+    st.stop()
+
+selected_model = "gemini-3.6-flash"
+
 DATA_DIR = "projects_data"
 DB_FILE = os.path.join(DATA_DIR, "hs_database_v3.json")
 IMG_DB_DIR = os.path.join(DATA_DIR, "db_images")
@@ -473,7 +485,6 @@ def generate_formal_pdf_report(container_no, markdown_content):
             txt = text.encode('latin-1', 'replace').decode('latin-1')
             pdf.multi_cell(186, 4.5, txt)
     
-    # Bezpieczne zwracanie bajtów PDF przez wywołanie output(dest='S').encode('latin1')
     try:
         pdf_output = pdf.output(dest='S')
         if isinstance(pdf_output, str):
@@ -622,12 +633,8 @@ if "current_container" not in st.session_state:
     else:
         st.session_state.current_container = None
 
-DEFAULT_KEY = "AQ.Ab8RN6LNsWIfhgnWWSVYIZEM2O_MG3HL2o9hFVmjexwfw8RMdg"
-
 st.sidebar.markdown("### 🚢 Genius AI BOT")
 st.sidebar.markdown("Enterprise Logistics Platform")
-api_key = st.sidebar.text_input("Klucz API Gemini", value=DEFAULT_KEY, type="password")
-selected_model = st.sidebar.selectbox("Model API", ["gemini-3.6-flash"])
 
 st.sidebar.markdown("---")
 
@@ -778,9 +785,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
             st.write("📂 **Załączone niezależnie pliki:** " + ", ".join([d.name for d in st.session_state.cbam_independent_docs]))
 
             if st.button("🚀 Uruchom Niezależny Audyt CBAM i Sprawdź Próg 50 Ton", type="primary", use_container_width=True):
-                if not api_key:
-                    st.error("Wpisz klucz API Gemini w panelu bocznym.")
-                elif not st.session_state.current_company:
+                if not st.session_state.current_company:
                     st.error("Wybierz najpierw firmę w panelu bocznym.")
                 else:
                     try:
@@ -843,35 +848,65 @@ elif app_mode == "🗄️ Wizualna Baza Kodów HS":
     
     if uploaded_import_files:
         if st.button("⚡ Przetwarzaj pliki i zasil Bazę Wzorców", type="primary"):
-            if not api_key:
-                st.error("Wpisz klucz API Gemini w panelu bocznym.")
-            else:
-                try:
-                    db_current = load_hs_database()
-                    total_imported = 0
-                    client = genai.Client(api_key=api_key)
+            try:
+                db_current = load_hs_database()
+                total_imported = 0
+                client = genai.Client(api_key=api_key)
+                
+                for imp_f in uploaded_import_files:
+                    f_bytes = imp_f.getvalue()
+                    ext = imp_f.name.split(".")[-1].lower()
                     
-                    for imp_f in uploaded_import_files:
-                        f_bytes = imp_f.getvalue()
-                        ext = imp_f.name.split(".")[-1].lower()
-                        
-                        if ext == "json":
-                            imported_json = json.loads(f_bytes.decode('utf-8'))
-                            if isinstance(imported_json, dict):
-                                db_current.update(imported_json)
-                                total_imported += len(imported_json)
-                        elif ext in ["xlsx", "xls"]:
-                            excel_text = process_excel_all_sheets(f_bytes)
-                            prompt_excel_import = (
-                                "Jesteś analitykiem celnym. Przeanalizuj poniższe dane z pliku Excel (wszystkie zakładki):\n"
-                                f"{excel_text}\n\n"
-                                "Wyciągnij każdą pozycję taryfową i zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) w pierwszej linii bez dodatkowego markdown:\n"
-                                "Nazwa_Produktu;Sklad_Materialowy;Kod_TARIC;Opis_CN;Tlumaczenie"
-                            )
-                            with st.spinner(f"Odczytywanie pliku Excel: {imp_f.name}..."):
-                                res_exc = safe_generate_content(client, selected_model, [prompt_excel_import])
-                                clean_csv_exc = res_exc.text.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
-                                for line in clean_csv_exc.split('\n'):
+                    if ext == "json":
+                        imported_json = json.loads(f_bytes.decode('utf-8'))
+                        if isinstance(imported_json, dict):
+                            db_current.update(imported_json)
+                            total_imported += len(imported_json)
+                    elif ext in ["xlsx", "xls"]:
+                        excel_text = process_excel_all_sheets(f_bytes)
+                        prompt_excel_import = (
+                            "Jesteś analitykiem celnym. Przeanalizuj poniższe dane z pliku Excel (wszystkie zakładki):\n"
+                            f"{excel_text}\n\n"
+                            "Wyciągnij każdą pozycję taryfową i zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) w pierwszej linii bez dodatkowego markdown:\n"
+                            "Nazwa_Produktu;Sklad_Materialowy;Kod_TARIC;Opis_CN;Tlumaczenie"
+                        )
+                        with st.spinner(f"Odczytywanie pliku Excel: {imp_f.name}..."):
+                            res_exc = safe_generate_content(client, selected_model, [prompt_excel_import])
+                            clean_csv_exc = res_exc.text.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
+                            for line in clean_csv_exc.split('\n'):
+                                if "Nazwa_Produktu" in line or line.count(';') < 2:
+                                    continue
+                                parts = line.split(';')
+                                if len(parts) >= 3:
+                                    p_name = parts[0].strip()
+                                    mat = parts[1].strip()
+                                    taric = parts[2].strip()
+                                    cn_desc = parts[3].strip() if len(parts) > 3 else ""
+                                    opt_trans = parts[4].strip() if len(parts) > 4 else ""
+                                    
+                                    if p_name and taric and taric != "nan":
+                                        key = f"{p_name}_{mat}_{taric}".lower()
+                                        db_current[key] = {
+                                            "product_name": p_name,
+                                            "material": mat,
+                                            "taric": taric,
+                                            "cn_description": cn_desc,
+                                            "optional_translation": opt_trans,
+                                            "image": ""
+                                        }
+                                        total_imported += 1
+                    elif ext == "pdf":
+                        prompt_pdf_import = (
+                            "Jesteś analitykiem celnym. Przeanalizuj ten dokument PDF zawierający historyczne taryfikacje towarów.\n"
+                            "Wyciągnij każdą pozycję i zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) w pierwszej linii bez dodatkowego markdown:\n"
+                            "Nazwa_Produktu;Sklad_Materialowy;Kod_TARIC;Opis_CN;Tlumaczenie"
+                        )
+                        try:
+                            contents = [prompt_pdf_import, types.Part.from_bytes(data=f_bytes, mime_type="application/pdf")]
+                            with st.spinner(f"Odczytywanie pliku PDF: {imp_f.name}..."):
+                                res_pdf = safe_generate_content(client, selected_model, contents)
+                                clean_csv_pdf = res_pdf.text.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
+                                for line in clean_csv_pdf.split('\n'):
                                     if "Nazwa_Produktu" in line or line.count(';') < 2:
                                         continue
                                     parts = line.split(';')
@@ -893,48 +928,15 @@ elif app_mode == "🗄️ Wizualna Baza Kodów HS":
                                                 "image": ""
                                             }
                                             total_imported += 1
-                        elif ext == "pdf":
-                            prompt_pdf_import = (
-                                "Jesteś analitykiem celnym. Przeanalizuj ten dokument PDF zawierający historyczne taryfikacje towarów.\n"
-                                "Wyciągnij każdą pozycję i zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) w pierwszej linii bez dodatkowego markdown:\n"
-                                "Nazwa_Produktu;Sklad_Materialowy;Kod_TARIC;Opis_CN;Tlumaczenie"
-                            )
-                            try:
-                                contents = [prompt_pdf_import, types.Part.from_bytes(data=f_bytes, mime_type="application/pdf")]
-                                with st.spinner(f"Odczytywanie pliku PDF: {imp_f.name}..."):
-                                    res_pdf = safe_generate_content(client, selected_model, contents)
-                                    clean_csv_pdf = res_pdf.text.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
-                                    for line in clean_csv_pdf.split('\n'):
-                                        if "Nazwa_Produktu" in line or line.count(';') < 2:
-                                            continue
-                                        parts = line.split(';')
-                                        if len(parts) >= 3:
-                                            p_name = parts[0].strip()
-                                            mat = parts[1].strip()
-                                            taric = parts[2].strip()
-                                            cn_desc = parts[3].strip() if len(parts) > 3 else ""
-                                            opt_trans = parts[4].strip() if len(parts) > 4 else ""
-                                            
-                                            if p_name and taric and taric != "nan":
-                                                key = f"{p_name}_{mat}_{taric}".lower()
-                                                db_current[key] = {
-                                                    "product_name": p_name,
-                                                    "material": mat,
-                                                    "taric": taric,
-                                                    "cn_description": cn_desc,
-                                                    "optional_translation": opt_trans,
-                                                    "image": ""
-                                                }
-                                                total_imported += 1
-                            except Exception:
-                                pass
-                                            
-                    save_hs_database(db_current)
-                    st.success(f"✅ Pomyślnie zaimportowano i zaktualizowano **{total_imported}** wzorców z plików do bazy!")
-                    time.sleep(1)
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Błąd przetwarzania plików: {str(e)}")
+                        except Exception:
+                            pass
+                                        
+                save_hs_database(db_current)
+                st.success(f"✅ Pomyślnie zaimportowano i zaktualizowano **{total_imported}** wzorców z plików do bazy!")
+                time.sleep(1)
+                st.rerun()
+            except Exception as e:
+                st.error(f"Błąd przetwarzania plików: {str(e)}")
 
     st.markdown("---")
     search_query = st.text_input("🔍 Szukaj w bazie (wpisz nazwę, skład np. IRON/PU/WOOD, lub kod CN):", "").strip().lower()
@@ -1003,8 +1005,6 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
     if st.button("⚡ Przetwarzaj Faktury i Generuj XML dla Huzara", type="primary", use_container_width=True):
         if not uploaded_intra_docs:
             st.warning("⚠️ Wgraj przynajmniej jeden dokument lub plik ZIP!")
-        elif not api_key:
-            st.error("Wpisz klucz API Gemini w panelu bocznym.")
         elif not st.session_state.current_company:
             st.error("Wybierz najpierw firmę w panelu bocznym.")
         else:
@@ -1149,7 +1149,6 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
             st.info(f"📂 Wczytano zapisane dokumenty z dysku ({len(proj['docs'])} szt.): " + ", ".join([d.name for d in proj["docs"]]))
 
         def call_ai(prompt, msg="Przetwarzanie dokumentów przez Genius AI BOT..."):
-            if not api_key: st.error("Brak klucza API!"); return None
             if not proj.get("docs"): st.error("Brak załączonych plików dla tego kontenera!"); return None
             try:
                 client = genai.Client(api_key=api_key)
