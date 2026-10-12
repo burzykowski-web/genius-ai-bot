@@ -57,7 +57,7 @@ def load_projects():
         proj_dir = os.path.join(DATA_DIR, proj_name)
         if os.path.isdir(proj_dir) and proj_name != "db_images":
             json_path = os.path.join(proj_dir, "data.json")
-            data = {"out1": "", "out2": "", "out3": "", "calc_audit": "", "docs": [], "hs_approved": [], "cbam_data": ""}
+            data = {"out1": "", "out2": "", "out3": "", "calc_audit": "", "docs": [], "hs_approved": [], "cbam_data": "", "cbam_audit_result": ""}
             if os.path.exists(json_path):
                 try:
                     with open(json_path, "r", encoding="utf-8") as f:
@@ -85,7 +85,8 @@ def save_project(proj_name, data):
         "out3": data.get("out3", ""),
         "calc_audit": data.get("calc_audit", ""),
         "hs_approved": data.get("hs_approved", []),
-        "cbam_data": data.get("cbam_data", "")
+        "cbam_data": data.get("cbam_data", ""),
+        "cbam_audit_result": data.get("cbam_audit_result", "")
     }
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(save_data, f, ensure_ascii=False, indent=2)
@@ -505,18 +506,18 @@ st.sidebar.markdown("---")
 # ==============================================================================
 if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
     st.title("🇪🇺 Moduł CBAM — Unijny Mechanizm Dostosowywania Cen na Granicach")
-    st.caption("Obliczanie wag i asortymentu podlegającego pod dyrektywę CBAM na podstawie taryfikacji oraz weryfikacja z dokumentów źródłowych.")
+    st.caption("Obliczanie wag i asortymentu podlegającego pod dyrektywę CBAM na podstawie taryfikacji oraz niezależna weryfikacja z własnoręcznie wgranych dokumentów.")
 
     cbam_tab = st.radio(
         "Wybierz Etap CBAM",
-        ["📊 Etap 1: Kalkulator z Taryfikacji i Wag (Na bazie Etapu 1/3 kontenerów)", "🔍 Etap 2: Niezależna Weryfikacja z Dokumentów i Odprawy"],
+        ["📊 Etap 1: Kalkulator z Taryfikacji i Wag (Na bazie Kontenera)", "🔍 Etap 2: Niezależny Audyt z Własnych Dokumentów i Odprawy"],
         horizontal=True
     )
     st.markdown("---")
 
-    if cbam_tab == "📊 Etap 1: Kalkulator z Taryfikacji i Wag (Na bazie Etapu 1/3 kontenerów)":
+    if cbam_tab == "📊 Etap 1: Kalkulator z Taryfikacji i Wag (Na bazie Kontenera)":
         st.subheader("📊 Etap 1: Przesiew i Kalkulacja Wagi CBAM z Zatwierdzonego Kontenera")
-        st.info("Ten etap korzysta z zatwierdzonych kodów HS oraz mas z aktywnego kontenera, aby wskazać towary objęte CBAM (stal, aluminium, nawozy itp.).")
+        st.info("Ten etap korzysta z zatwierdzonych kodów HS oraz mas z aktywnego kontenera, aby wskazać towary objęte CBAM.")
 
         if not st.session_state.current_container:
             st.warning("⚠️ Najpierw wybierz lub stwórz kontener w module głównym i przeprowadź taryfikację!")
@@ -525,7 +526,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
             proj_data = st.session_state.projects[cur_con]
             
             if not proj_data.get("hs_approved"):
-                st.warning(f"⚠️ Brak zatwierdzonych kodów HS dla kontenera `{cur_con}`. Przejdź do modulu kontenerów i zatwierdź kody w Etapie 3.")
+                st.warning(f"⚠️ Brak zatwierdzonych kodów HS dla kontenera `{cur_con}`. Przejdź do modułu kontenerów i zatwierdź kody w Etapie 3.")
             else:
                 df_approved = pd.DataFrame(proj_data["hs_approved"])
                 st.markdown(f"**Aktywny kontener:** `{cur_con}` | Liczba pozycji w bazie zatwierdzonych: `{len(df_approved)}`")
@@ -553,52 +554,88 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                     st.markdown(proj_data["cbam_data"])
 
     else:
-        st.subheader("🔍 Etap 2: Niezależny Audyt i Wyliczenie CBAM z Dokumentów Źródłowych")
-        st.info("Ten etap niezależnie analizuje wgrane pliki (fakturę, packing listę oraz odprawę chińską / 报关单), weryfikuje masy i wylicza udziały CBAM dla konkretnego przypadku.")
+        st.subheader("🔍 Etap 2: Niezależny Audyt i Wyliczenie CBAM z Własnych Dokumentów Źródłowych")
+        st.info("Wgraj niezależne pliki handlowe lub odprawę celną (`报关单`), aby system przeanalizował je pod kątem CBAM niezależnie od zapisanych kontenerów.")
 
-        if not st.session_state.current_container:
-            st.warning("⚠️ Najpierw wybierz kontener posiadający załączone dokumenty w module głównym!")
-        else:
-            cur_con = st.session_state.current_container
-            proj_data = st.session_state.projects[cur_con]
+        if "cbam_independent_docs" not in st.session_state:
+            st.session_state.cbam_independent_docs = []
 
-            if not proj_data.get("docs"):
-                st.warning("⚠️ Brak załączonych dokumentów w wybranym kontenerze.")
-            else:
-                if st.button("🚀 Uruchom Niezależny Audyt CBAM z Dokumentów (Etap 2)", type="primary"):
-                    client = genai.Client(api_key=api_key)
-                    prompt_cbam_e2 = (
-                        "Jesteś niezależnym biegłym ds. audytu celnego i sprawozdawczości CBAM.\n"
-                        "Przeanalizuj wszystkie załączone dokumenty (Commercial Invoice, Packing List, Odprawę Chińską / 报关单).\n"
-                        "Dokonaj niezależnego wyliczenia:\n"
-                        "1. Znajdź towary podlegające pod CBAM (stal, żelazo, aluminium itp.).\n"
-                        "2. Porównaj masy netto między fakturą a packing listą / odprawą.\n"
-                        "3. Stwórz tabelę z niezależnym wyliczeniem mas wbudowanych i wag dla celów sprawozdawczych CBAM.\n"
-                        "Przedstaw pełne podsumowanie i wnioski dla importera."
-                    )
-                    contents = [prompt_cbam_e2]
-                    for f in proj_data["docs"]:
-                        if f.type == "spreadsheet":
-                            try:
-                                df_temp = pd.read_excel(BytesIO(f.getvalue()), sheet_name=0)
+        uploaded_cbam_indep = st.file_uploader(
+            "Wgraj pliki do niezależnej analizy CBAM (PDF / Excel / ZIP / Skan Odprawy lub Faktury)",
+            type=["zip", "pdf", "xlsx", "xls", "png", "jpg", "jpeg"],
+            accept_multiple_files=True,
+            key="cbam_indep_files"
+        )
+
+        if uploaded_cbam_indep:
+            saved_indep = []
+            for f in uploaded_cbam_indep:
+                if f.name.lower().endswith(".zip"):
+                    try:
+                        with zipfile.ZipFile(BytesIO(f.getvalue())) as z:
+                            for filename in z.namelist():
+                                if filename.endswith('/') or '__MACOSX' in filename or filename.startswith('.'):
+                                    continue
+                                file_data = z.read(filename)
+                                base_name = os.path.basename(filename)
+                                if not base_name: continue
+                                class ZipWrapper:
+                                    def __init__(self, name, data):
+                                        self.name = name
+                                        self._data = data
+                                    def getvalue(self):
+                                        return self._data
+                                saved_indep.append(ZipWrapper(base_name, file_data))
+                    except Exception as e:
+                        st.error(f"Błąd rozpakowywania ZIP: {str(e)}")
+                else:
+                    saved_indep.append(f)
+            st.session_state.cbam_independent_docs = saved_indep
+            st.success(f"✅ Wgrano i załączono {len(saved_indep)} niezależnych plików do analizy CBAM.")
+
+        if st.session_state.cbam_independent_docs:
+            st.write("📂 **Załączone niezależnie pliki:** " + ", ".join([d.name for d in st.session_state.cbam_independent_docs]))
+
+            if st.button("🚀 Uruchom Niezależny Audyt CBAM z Wgranych Plików", type="primary", use_container_width=True):
+                if not api_key:
+                    st.error("Wpisz klucz API Gemini w panelu bocznym.")
+                else:
+                    try:
+                        client = genai.Client(api_key=api_key)
+                        prompt_cbam_indep_audit = (
+                            "Jesteś niezależnym biegłym ds. audytu celnego i sprawozdawczości CBAM.\n"
+                            "Przeanalizuj wszystkie wgrane powyżej pliki (Commercial Invoice, Packing List, Odprawę Chińską / 报关单 itp.).\n"
+                            "Dokonaj niezależnego wyliczenia:\n"
+                            "1. Wskaź towary objęte unijnym rozporządzeniem CBAM (stal, żelazo, aluminium, nawozy itp.).\n"
+                            "2. Sprawdź i porównaj masy netto dla tych pozycji w dokumentach źródłowych.\n"
+                            "3. Stwórz szczegółową tabelę z niezależnym wyliczeniem mas netto oraz udziałem w sprawozdawczości CBAM.\n"
+                            "4. Podaj wnioski i zalecenia dla celów deklaracyjnych."
+                        )
+                        contents = [prompt_cbam_indep_audit]
+                        for f in st.session_state.cbam_independent_docs:
+                            f_bytes = f.getvalue()
+                            ext = f.name.split(".")[-1].lower()
+                            if ext in ["xlsx", "xls"]:
+                                df_temp = pd.read_excel(BytesIO(f_bytes), sheet_name=0)
                                 contents.append(f"\n--- EXCEL ({f.name}) ---\n" + df_temp.to_string() + "\n")
-                            except Exception:
-                                pass
-                        elif f.type == "application/pdf":
-                            contents.append(types.Part.from_bytes(data=f.getvalue(), mime_type="application/pdf"))
-                        elif f.type in ["image/jpeg", "application/png"]:
-                            contents.append(types.Part.from_bytes(data=f.getvalue(), mime_type=f.type))
+                            elif ext == "pdf":
+                                contents.append(types.Part.from_bytes(data=f_bytes, mime_type="application/pdf"))
+                            elif ext in ["jpg", "jpeg"]:
+                                contents.append(types.Part.from_bytes(data=f_bytes, mime_type="image/jpeg"))
+                            elif ext == "png":
+                                contents.append(types.Part.from_bytes(data=f_bytes, mime_type="application/png"))
 
-                    with st.spinner("Niezależne przeliczanie dokumentów i weryfikacja CBAM..."):
-                        res_cbam2 = safe_generate_content(client, selected_model, contents)
-                        proj_data["cbam_audit_result"] = res_cbam2.text
-                        save_project(cur_con, proj_data)
-                        st.success("✅ Niezależny audyt CBAM (Etap 2) zakończony!")
-                        st.rerun()
+                        with st.spinner("Niezależna analiza wgranych dokumentów pod kątem CBAM..."):
+                            res_indep = safe_generate_content(client, selected_model, contents)
+                            st.session_state.cbam_indep_result = res_indep.text
+                            st.success("✅ Niezależny audyt CBAM z wgranych plików zakończony pomyślnie!")
+                    except Exception as e:
+                        st.error(f"Błąd podczas niezależnego audytu: {str(e)}")
 
-                if proj_data.get("cbam_audit_result"):
-                    st.markdown("### 📋 Raport Niezależnego Audytu CBAM (Etap 2)")
-                    st.markdown(proj_data["cbam_audit_result"])
+        if "cbam_indep_result" in st.session_state and st.session_state.cbam_indep_result:
+            st.markdown("---")
+            st.markdown("### 📋 Wynik Niezależnego Audytu CBAM")
+            st.markdown(st.session_state.cbam_indep_result)
 
 # ==============================================================================
 # MODUŁ 3: WIZUALNA BAZA KODÓW HS
