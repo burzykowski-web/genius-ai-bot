@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 from xml.dom import minidom
 from io import StringIO, BytesIO
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 import pandas as pd
 import streamlit as st
 from google import genai
@@ -807,7 +808,6 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                         status_text = st.empty()
                         total_files = len(st.session_state.cbam_independent_docs)
                         
-                        # Funkcja do równoległego przetwarzania pojedynczego pliku w wątku
                         def process_single_file(f_item):
                             try:
                                 f_bytes = f_item.getvalue()
@@ -842,7 +842,6 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                                 pass
                             return None
 
-                        # Uruchomienie wielowątkowego przetwarzania (np. 8 wątków naraz dla maksymalnej prędkości)
                         completed_count = 0
                         with ThreadPoolExecutor(max_workers=8) as executor:
                             future_to_file = {executor.submit(process_single_file, f): f for f in st.session_state.cbam_independent_docs}
@@ -854,23 +853,28 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                                 if res_text:
                                     all_extracted_rows.append(res_text)
 
-                        status_text.text("Generowanie ostatecznego raportu i podsumowania wag CBAM...")
+                        dzisiejsza_data = datetime.now().strftime("%d.%m.%Y")
+                        status_text.text("Generowanie ostatecznego raportu, wyszczególnienia CBAM i wyliczeń finansowych...")
+                        
                         summary_prompt = (
                             f"Jesteś głównym biegłym ds. CBAM dla firmy: {st.session_state.current_company}.\n"
-                            "Oto zsumowane dane wyciągnięte ze wszystkich 62 wgranych niemieckich odpraw celnych i dokumentów:\n"
+                            f"Oficjalna data sporządzenia raportu to: {dzisiejsza_data}.\n"
+                            "Oto zsumowane dane wyciągnięte ze wszystkich wgranych niemieckich odpraw celnych i dokumentów:\n"
                             f"{' '.join(all_extracted_rows)}\n\n"
                             "Zadanie:\n"
-                            "1. Zbierz i zsumuj dokładne masy netto wszystkich towarów.\n"
-                            "2. **Wydziel osobno i stwórz osobną tabelę wyłącznie dla towarów podlegających pod CBAM** (stal, żelazo, aluminium itp.).\n"
-                            "3. Podsumuj łączną masę towarów CBAM w kilogramach oraz tonach i jednoznacznie odpowiedz, czy przekroczono próg zwolnienia de minimis wynoszący 50 ton rocznie (TAK / NIE).\n"
-                            "4. Przygotuj profesjonalny raport w formacie Markdown z wyraźnym podziałem na sekcję ogólną oraz osobną sekcję dla materiałów CBAM."
+                            f"1. W nagłówku raportu wpisz bezwzględnie dzisiejszą datę: {dzisiejsza_data}.\n"
+                            "2. Zbierz i zsumuj dokładne masy netto wszystkich towarów.\n"
+                            "3. **Stwórz osobną, szczegółową tabelę wyszczególniającą wyłącznie pozycje towarowe objęte CBAM** (kolumny: [Nazwa Towaru | Kod TARIC/CN | Masa Netto (kg) | Kategoria CBAM]).\n"
+                            "4. Podsumuj łączną masę towarów CBAM w kilogramach oraz tonach i jednoznacznie odpowiedz, czy przekroczono próg zwolnienia de minimis wynoszący 50 ton rocznie (TAK / NIE).\n"
+                            "5. **Dokonaj wyliczenia szacunkowego (kalkulacji finansowej)**: na podstawie mas towarów CBAM i aktualnych uśrednionych unijnych cen uprawnień EU ETS, podaj szacunkową wartość/koszt finansowy (w EUR), jaki wiąże się z tymi emisjami w ramach mechanizmu CBAM.\n"
+                            "6. Przygotuj profesjonalny, czytelny raport w formacie Markdown."
                         )
 
                         final_res = safe_generate_content(client, selected_model, [summary_prompt])
                         st.session_state.cbam_indep_result = final_res.text
                         status_text.empty()
                         progress_bar.empty()
-                        st.success("✅ Pomyślnie przetworzono 62 odprawy celne równolegle i wygenerowano raport CBAM!")
+                        st.success("✅ Pomyślnie przetworzono odprawy celne równolegle i wygenerowano raport CBAM!")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Błąd podczas audytu: {str(e)}")
