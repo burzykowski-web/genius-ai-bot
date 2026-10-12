@@ -28,22 +28,15 @@ st.set_page_config(page_title="Genius AI BOT | Enterprise Logistics Platform", p
 # --- NOWOCZESNY DESIGN CSS (ENTERPRISE DASHBOARD) ---
 st.markdown("""
 <style>
-    /* Globalne tło i czcionka */
     .stApp {
         background-color: #f8fafc;
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
-    
-    /* Ukrycie standardowej stopki Streamlit */
     footer {visibility: hidden;}
-    
-    /* Panel boczny */
     section[data-testid="stSidebar"] {
         background-color: #ffffff;
         border-right: 1px solid #e2e8f0;
     }
-    
-    /* Karty i pojemniki (Kafle KPI) */
     .metric-card {
         background: #ffffff;
         border: 1px solid #e2e8f0;
@@ -52,23 +45,17 @@ st.markdown("""
         box-shadow: 0 1px 3px rgba(0,0,0,0.05);
         text-align: center;
     }
-    
-    /* Przyciski główne */
     .stButton>button {
         border-radius: 8px;
         font-weight: 600;
         transition: all 0.2s ease;
     }
-    
-    /* Tabele i edytory */
     div[data-testid="stDataFrame"], div[data-testid="stDataEditor"] {
         border-radius: 8px;
         overflow: hidden;
         border: 1px solid #e2e8f0;
         box-shadow: 0 1px 3px rgba(0,0,0,0.02);
     }
-    
-    /* Nagłówki sekcji */
     h1, h2, h3 {
         color: #1e293b;
         font-weight: 700;
@@ -213,8 +200,8 @@ def load_hs_database():
                 data = json.load(f)
                 if isinstance(data, dict):
                     return data
-        except Exception as e:
-            st.sidebar.error(f"Błąd odczytu bazy HS: {str(e)}")
+        except Exception:
+            pass
     return {}
 
 def save_hs_database(db):
@@ -540,19 +527,18 @@ def call_ai_chunked_stage3(client, model_name, summary_df):
             
     return "\n".join(all_t3_rows)
 
-# --- SIDEBAR & STEROWANIE ---
+# --- INICJALIZACJA STANU SESJI Z BEZPIECZNYM FALLBACKIEM ---
 if "company_data" not in st.session_state:
     st.session_state.company_data = load_companies_and_containers()
 
 if "current_company" not in st.session_state:
-    if st.session_state.company_data:
-        st.session_state.current_company = list(st.session_state.company_data.keys())[0]
-    else:
-        st.session_state.current_company = None
+    comps = list(st.session_state.company_data.keys())
+    st.session_state.current_company = comps[0] if comps else None
 
 if "current_container" not in st.session_state:
-    if st.session_state.current_company and st.session_state.company_data[st.session_state.current_company]:
-        st.session_state.current_container = list(st.session_state.company_data[st.session_state.current_company].keys())[0]
+    if st.session_state.current_company and st.session_state.company_data.get(st.session_state.current_company):
+        conts = list(st.session_state.company_data[st.session_state.current_company].keys())
+        st.session_state.current_container = conts[0] if conts else None
     else:
         st.session_state.current_container = None
 
@@ -577,9 +563,11 @@ if st.sidebar.button("+ Dodaj Firmę", use_container_width=True):
         st.sidebar.success(f"Aktywowano firmę: {new_comp}")
         st.rerun()
 
-if st.session_state.company_data:
-    comp_list = list(st.session_state.company_data.keys())
-    curr_comp_idx = comp_list.index(st.session_state.current_company) if st.session_state.current_company in comp_list else 0
+comp_list = list(st.session_state.company_data.keys())
+if comp_list:
+    if st.session_state.current_company not in comp_list:
+        st.session_state.current_company = comp_list[0]
+    curr_comp_idx = comp_list.index(st.session_state.current_company)
     selected_comp = st.sidebar.selectbox("📂 Aktywna Firma", options=comp_list, index=curr_comp_idx)
     
     if selected_comp != st.session_state.current_company:
@@ -625,10 +613,10 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
         st.subheader("📊 Etap 1: Przesiew i Kalkulacja Wagi CBAM z Zatwierdzonego Kontenera")
         st.info("Ten etap korzysta z zatwierdzonych kodów HS oraz mas z aktywnego kontenera wybranej firmy.")
 
-        if not st.session_state.current_company or not st.session_state.company_data.get(st.session_state.current_company):
+        cur_comp = st.session_state.current_company
+        if not cur_comp or not st.session_state.company_data.get(cur_comp):
             st.warning("⚠️ Wybrana firma nie posiada kontenerów!")
         else:
-            cur_comp = st.session_state.current_company
             containers_in_comp = list(st.session_state.company_data[cur_comp].keys())
             selected_cbam_cont = st.selectbox("Wybierz kontener dla firmy do analizy CBAM", options=containers_in_comp)
             
@@ -1009,7 +997,6 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
         st.sidebar.markdown("---")
         st.sidebar.markdown(f"**📂 Aktywna Firma:** `{st.session_state.current_company}`")
         
-        # Zarządzanie kontenerami w aktywnej firmie
         new_no = st.sidebar.text_input("Numer Kontenera dla tej firmy", placeholder="np. CNEU4699420").upper().strip()
         if st.sidebar.button("+ Dodaj Kontener do Firmy", use_container_width=True):
             if new_no:
@@ -1025,7 +1012,9 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
         containers_dict = st.session_state.company_data[st.session_state.current_company]
         if containers_dict:
             cont_list = list(containers_dict.keys())
-            curr_cont_idx = cont_list.index(st.session_state.current_container) if st.session_state.current_container in cont_list else 0
+            if st.session_state.current_container not in cont_list:
+                st.session_state.current_container = cont_list[0]
+            curr_cont_idx = cont_list.index(st.session_state.current_container)
             selected_cont = st.sidebar.selectbox("📦 Wybierz Kontener", options=cont_list, index=curr_cont_idx)
             st.session_state.current_container = selected_cont
 
