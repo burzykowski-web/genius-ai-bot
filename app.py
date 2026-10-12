@@ -513,6 +513,33 @@ api_key = st.sidebar.text_input("Klucz API Gemini", value=DEFAULT_KEY, type="pas
 selected_model = st.sidebar.selectbox("Model API", ["gemini-3.6-flash"])
 
 st.sidebar.markdown("---")
+
+# GLOBALNY WYBÓR FIRMY (Krzyżowy dla całej aplikacji)
+st.sidebar.markdown("### 🏢 Globalny Wybór Firmy")
+new_comp = st.sidebar.text_input("Nazwa Nowej Firmy", placeholder="np. Firma XYZ").strip()
+if st.sidebar.button("+ Dodaj Firmę", use_container_width=True):
+    if new_comp:
+        if new_comp not in st.session_state.company_data:
+            st.session_state.company_data[new_comp] = {}
+        st.session_state.current_company = new_comp
+        st.session_state.current_container = None
+        st.sidebar.success(f"Aktywowano firmę: {new_comp}")
+        st.rerun()
+
+if st.session_state.company_data:
+    comp_list = list(st.session_state.company_data.keys())
+    curr_comp_idx = comp_list.index(st.session_state.current_company) if st.session_state.current_company in comp_list else 0
+    selected_comp = st.sidebar.selectbox("📂 Aktywna Firma", options=comp_list, index=curr_comp_idx)
+    
+    if selected_comp != st.session_state.current_company:
+        st.session_state.current_company = selected_comp
+        containers_in_comp = list(st.session_state.company_data[selected_comp].keys())
+        st.session_state.current_container = containers_in_comp[0] if containers_in_comp else None
+        st.rerun()
+else:
+    st.sidebar.warning("Brak zdefiniowanych firm. Dodaj firmę powyżej.")
+
+st.sidebar.markdown("---")
 app_mode = st.sidebar.radio(
     "📌 Wybierz Moduł Pracy:",
     [
@@ -531,6 +558,11 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
     st.title("🇪🇺 Moduł CBAM — Unijny Mechanizm Dostosowywania Cen na Granicach")
     st.caption("Obliczanie wag i asortymentu podlegającego pod dyrektywę CBAM na podstawie taryfikacji oraz niezależna weryfikacja z własnoręcznie wgranych dokumentów.")
 
+    if not st.session_state.current_company:
+        st.warning("⚠️ Najpierw dodaj i wybierz firmę w panelu bocznym!")
+    else:
+        st.info(f"📂 **Aktywna Firma w module CBAM:** `{st.session_state.current_company}`")
+
     cbam_tab = st.radio(
         "Wybierz Etap CBAM",
         ["📊 Etap 1: Kalkulator z Taryfikacji i Wag (Na bazie Kontenera)", "🔍 Etap 2: Niezależny Audyt z Własnych Dokumentów i Odprawy"],
@@ -540,20 +572,22 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
 
     if cbam_tab == "📊 Etap 1: Kalkulator z Taryfikacji i Wag (Na bazie Kontenera)":
         st.subheader("📊 Etap 1: Przesiew i Kalkulacja Wagi CBAM z Zatwierdzonego Kontenera")
-        st.info("Ten etap korzysta z zatwierdzonych kodów HS oraz mas z aktywnego kontenera, aby wskazać towary objęte CBAM.")
+        st.info("Ten etap korzysta z zatwierdzonych kodów HS oraz mas z aktywnego kontenera wybranej firmy.")
 
-        if not st.session_state.current_container:
-            st.warning("⚠️ Najpierw wybierz firmę, kontener w panelu głównym i przeprowadź taryfikację!")
+        if not st.session_state.current_company or not st.session_state.company_data.get(st.session_state.current_company):
+            st.warning("⚠️ Wybrana firma nie posiada kontenerów!")
         else:
             cur_comp = st.session_state.current_company
-            cur_con = st.session_state.current_container
-            proj_data = st.session_state.company_data[cur_comp][cur_con]
+            containers_in_comp = list(st.session_state.company_data[cur_comp].keys())
+            selected_cbam_cont = st.selectbox("Wybierz kontener dla firmy do analizy CBAM", options=containers_in_comp)
+            
+            proj_data = st.session_state.company_data[cur_comp][selected_cbam_cont]
             
             if not proj_data.get("hs_approved"):
-                st.warning(f"⚠️ Brak zatwierdzonych kodów HS dla kontenera `{cur_con}` w firmie `{cur_comp}`. Przejdź do modułu kontenerów i zatwierdź kody w Etapie 3.")
+                st.warning(f"⚠️ Brak zatwierdzonych kodów HS dla kontenera `{selected_cbam_cont}` w firmie `{cur_comp}`. Przejdź do modułu kontenerów i zatwierdź kody w Etapie 3.")
             else:
                 df_approved = pd.DataFrame(proj_data["hs_approved"])
-                st.markdown(f"**Firma:** `{cur_comp}` | **Kontener:** `{cur_con}` | Liczba pozycji zatwierdzonych: `{len(df_approved)}`")
+                st.markdown(f"**Firma:** `{cur_comp}` | **Kontener:** `{selected_cbam_cont}` | Liczba pozycji zatwierdzonych: `{len(df_approved)}`")
 
                 if st.button("⚡ Uruchom Analizę i Kalkulację Wagi CBAM (Etap 1)", type="primary"):
                     client = genai.Client(api_key=api_key)
@@ -569,7 +603,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                     with st.spinner("Analiza kodów i wyliczanie wag CBAM..."):
                         res_cbam1 = safe_generate_content(client, selected_model, prompt_cbam_e1)
                         proj_data["cbam_data"] = res_cbam1.text
-                        save_container_data(cur_comp, cur_con, proj_data)
+                        save_container_data(cur_comp, selected_cbam_cont, proj_data)
                         st.success("✅ Analiza Etapu 1 zakończona pomyślnie!")
                         st.rerun()
 
@@ -579,7 +613,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
 
     else:
         st.subheader("🔍 Etap 2: Niezależny Audyt i Wyliczenie CBAM z Własnych Dokumentów Źródłowych")
-        st.info("Wgraj niezależne pliki handlowe lub odprawę celną (`报关单`), aby system przeanalizował je pod kątem CBAM niezależnie.")
+        st.info(f"Wgraj niezależne pliki handlowe lub odprawę celną dla aktywnej firmy: **{st.session_state.current_company}**.")
 
         if "cbam_independent_docs" not in st.session_state:
             st.session_state.cbam_independent_docs = []
@@ -615,7 +649,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                 else:
                     saved_indep.append(f)
             st.session_state.cbam_independent_docs = saved_indep
-            st.success(f"✅ Wgrano i załączono {len(saved_indep)} niezależnych plików do analizy CBAM.")
+            st.success(f"✅ Wgrano i załączono {len(saved_indep)} niezależnych plików do analizy CBAM dla firmy {st.session_state.current_company}.")
 
         if st.session_state.cbam_independent_docs:
             st.write("📂 **Załączone niezależnie pliki:** " + ", ".join([d.name for d in st.session_state.cbam_independent_docs]))
@@ -623,11 +657,13 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
             if st.button("🚀 Uruchom Niezależny Audyt CBAM z Wgranych Plików", type="primary", use_container_width=True):
                 if not api_key:
                     st.error("Wpisz klucz API Gemini w panelu bocznym.")
+                elif not st.session_state.current_company:
+                    st.error("Wybierz najpierw firmę w panelu bocznym.")
                 else:
                     try:
                         client = genai.Client(api_key=api_key)
                         prompt_cbam_indep_audit = (
-                            "Jesteś niezależnym biegłym ds. audytu celnego i sprawozdawczości CBAM.\n"
+                            f"Jesteś niezależnym biegłym ds. audytu celnego i sprawozdawczości CBAM dla firmy: {st.session_state.current_company}.\n"
                             "Przeanalizuj poniższe dane źródłowe ze wszystkich wgranych dokumentów i zakładek Excel:\n"
                             "Dokonaj niezależnego wyliczenia:\n"
                             "1. Wskaź towary objęte unijnym rozporządzeniem CBAM (stal, żelazo, aluminium, nawozy itp.).\n"
@@ -649,16 +685,16 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                             elif ext == "png":
                                 contents.append(types.Part.from_bytes(data=f_bytes, mime_type="application/png"))
 
-                        with st.spinner("Niezależna analiza wgranych dokumentów (w tym arkuszy Excel) pod kątem CBAM..."):
+                        with st.spinner(f"Niezależna analiza wgranych dokumentów dla firmy {st.session_state.current_company}..."):
                             res_indep = safe_generate_content(client, selected_model, contents)
                             st.session_state.cbam_indep_result = res_indep.text
-                            st.success("✅ Niezależny audyt CBAM z wgranych plików zakończony pomyślnie!")
+                            st.success("✅ Niezależny audyt CBAM zakończony pomyślnie!")
                     except Exception as e:
                         st.error(f"Błąd podczas niezależnego audytu: {str(e)}")
 
         if "cbam_indep_result" in st.session_state and st.session_state.cbam_indep_result:
             st.markdown("---")
-            st.markdown("### 📋 Wynik Niezależnego Audytu CBAM")
+            st.markdown(f"### 📋 Wynik Niezależnego Audytu CBAM dla Firmy: {st.session_state.current_company}")
             st.markdown(st.session_state.cbam_indep_result)
 
 # ==============================================================================
@@ -818,7 +854,12 @@ elif app_mode == "🗄️ Wizualna Baza Kodów HS":
 # ==============================================================================
 elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
     st.title("📦 Moduł INTRASTAT — Generator Faktur XML dla Huzar WinSAD")
-    st.caption("Moduł automatycznie sumuje sztuki, masy i wartości dla tożsamych kodów CN w ramach faktury.")
+    if not st.session_state.current_company:
+        st.warning("⚠️ Najpierw dodaj i wybierz firmę w panelu bocznym!")
+    else:
+        st.info(f"📂 **Aktywna Firma w module INTRASTAT:** `{st.session_state.current_company}`")
+
+    st.caption("Moduł automatycznie sumuje sztuki, masy i wartości dla tożsamych kodów CN w ramach faktury dla wybranej firmy.")
 
     uploaded_intra_docs = st.file_uploader(
         "Wgraj paczkę ZIP lub pliki handlowe (PDF / Excel / Skany)",
@@ -832,6 +873,8 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
             st.warning("⚠️ Wgraj przynajmniej jeden dokument lub plik ZIP!")
         elif not api_key:
             st.error("Wpisz klucz API Gemini w panelu bocznym.")
+        elif not st.session_state.current_company:
+            st.error("Wybierz najpierw firmę w panelu bocznym.")
         else:
             try:
                 processed_intra_docs = []
@@ -856,7 +899,7 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
 
                 client = genai.Client(api_key=api_key)
                 prompt_intra = (
-                    "Jesteś precyzyjnym systemem OCR do faktur handlowych dla Intrastat.\n"
+                    f"Jesteś precyzyjnym systemem OCR do faktur handlowych dla Intrastat dla firmy: {st.session_state.current_company}.\n"
                     "Przeanalizuj poniższe dane ze wszystkich wgranych plików i zakładek Excel.\n"
                     "ZASADA BEZWZGLĘDNA: Odczytaj dokładnie numery faktur, kontrahentów, daty, NIP-y, wartości oraz kody CN.\n"
                     "Zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) i kropką jako separatorem dziesiętnym w pierwszej linii:\n"
@@ -877,7 +920,7 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
                     elif ext == "png":
                         contents.append(types.Part.from_bytes(data=f_bytes, mime_type="application/png"))
 
-                with st.spinner("Odczytywanie dokumentów i przygotowanie struktury TFakturyHS..."):
+                with st.spinner(f"Odczytywanie dokumentów dla firmy {st.session_state.current_company} i przygotowanie struktury TFakturyHS..."):
                     res_intra = safe_generate_content(client, selected_model, contents)
                     df_processed = process_intrastat_dataframe(res_intra.text)
                     st.session_state.df_intra_result = df_processed
@@ -888,7 +931,7 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
 
     if "df_intra_result" in st.session_state:
         st.markdown("---")
-        st.markdown("### 📋 Podgląd Zagregowanych Pozycji Intrastat")
+        st.markdown(f"### 📋 Podgląd Zagregowanych Pozycji Intrastat dla Firmy: {st.session_state.current_company}")
         df_edited_intra = st.data_editor(
             st.session_state.df_intra_result,
             use_container_width=True,
@@ -899,7 +942,7 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
         st.download_button(
             label="📥 Pobierz Poprawiony Plik XML (TFakturyHS z WDT) pod Huzar WinSAD",
             data=xml_huzar_bytes,
-            file_name=f"FakturyHS_Intrastat_PLN.xml",
+            file_name=f"FakturyHS_Intrastat_{st.session_state.current_company}_PLN.xml",
             mime="application/xml",
             use_container_width=True
         )
@@ -908,33 +951,14 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
 # MODUŁ 1: FIRMY I KONTENERY
 # ==============================================================================
 elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
-    st.sidebar.markdown("### 🏢 Zarządzanie Firmami i Kontenerami")
-    
-    # 1. Zarządzanie Firmami
-    new_comp = st.sidebar.text_input("Nazwa Nowej Firmy", placeholder="np. Firma XYZ").strip()
-    if st.sidebar.button("+ Dodaj Firmę", use_container_width=True):
-        if new_comp:
-            if new_comp not in st.session_state.company_data:
-                st.session_state.company_data[new_comp] = {}
-            st.session_state.current_company = new_comp
-            st.session_state.current_container = None
-            st.sidebar.success(f"Aktywowano firmę: {new_comp}")
-            st.rerun()
-
-    if st.session_state.company_data:
-        comp_list = list(st.session_state.company_data.keys())
-        curr_comp_idx = comp_list.index(st.session_state.current_company) if st.session_state.current_company in comp_list else 0
-        selected_comp = st.sidebar.selectbox("📂 Wybierz Firmę", options=comp_list, index=curr_comp_idx)
-        
-        if selected_comp != st.session_state.current_company:
-            st.session_state.current_company = selected_comp
-            containers_in_comp = list(st.session_state.company_data[selected_comp].keys())
-            st.session_state.current_container = containers_in_comp[0] if containers_in_comp else None
-            st.rerun()
-
+    if not st.session_state.current_company:
+        st.title("Genius AI BOT — Dodaj i Wybierz Firmę")
+        st.warning("⚠️ Najpierw dodaj firmę w panelu bocznym po lewej stronie, aby móc zarządzać jej kontenerami.")
+    else:
         st.sidebar.markdown("---")
+        st.sidebar.markdown(f"**📂 Aktywna Firma:** `{st.session_state.current_company}`")
         
-        # 2. Zarządzanie Kontenerami w wybranej firmie
+        # Zarządzanie kontenerami w aktywnej firmie
         new_no = st.sidebar.text_input("Numer Kontenera dla tej firmy", placeholder="np. CNEU4699420").upper().strip()
         if st.sidebar.button("+ Dodaj Kontener do Firmy", use_container_width=True):
             if new_no:
@@ -966,8 +990,8 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
     st.sidebar.markdown(f"**🗄️ Baza Wizualna HS:** `{len(hs_db)} wzorców`")
 
     if not st.session_state.current_company or not st.session_state.current_container:
-        st.title("Genius AI BOT — Wybierz Firmę i Kontener")
-        st.info("W panelu bocznym dodaj lub wybierz **Firmę**, a następnie utwórz lub wybierz w jej podkatalogu **Kontener**, aby rozpocząć pracę.")
+        st.title("Genius AI BOT — Gotowy do Pracy")
+        st.info("Wybierz firmę oraz kontener w panelu bocznym.")
     else:
         cur_comp = st.session_state.current_company
         cur_no = st.session_state.current_container
@@ -1010,7 +1034,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                 return None
 
         PROMPT_ETAP1 = (
-            "Jesteś bezwzględnym i niezwykle skrupulatnym starszym audytorem celnym w Genius Logistics.\n"
+            f"Jesteś bezwzględnym i niezwykle skrupulatnym starszym audytorem celnym w Genius Logistics dla firmy: {cur_comp}.\n"
             "Przeanalizuj poniższe dane ze wszystkich dokumentów oraz wszystkich zakładek w plikach Excel.\n"
             "Twoim zadaniem jest przeprowadzenie rygorystycznej KONTROLI FORMALNEJ I KRZYŻOWEJ (Cross-Check).\n\n"
             "BEZWZGLĘDNY WYMÓG ROZDZIELNEJ KONTROLI ILOŚCI I KARTONÓW:\n"
