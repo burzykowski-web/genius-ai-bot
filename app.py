@@ -6,7 +6,6 @@ import zipfile
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
 from io import StringIO, BytesIO
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 import pandas as pd
 import streamlit as st
@@ -751,7 +750,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
 
     else:
         st.subheader("🔍 Etap 2: Niezależny Audyt i Weryfikacja Progu 50 Ton CBAM z Własnych Dokumentów")
-        st.info(f"Wgraj niezależne pliki handlowe lub niemieckie odprawy celne dla aktywnej firmy: **{st.session_state.current_company}**. System przetworzy dziesiątki plików jednocześnie, zsumuje masę netto i wykaże materiały CBAM.")
+        st.info(f"Wgraj niezależne pliki handlowe lub niemieckie odprawy celne dla aktywnej firmy: **{st.session_state.current_company}**. System przetworzy pliki sekwencyjnie, zsumuje masę netto i wykaże materiały CBAM.")
 
         if "cbam_independent_docs" not in st.session_state:
             st.session_state.cbam_independent_docs = []
@@ -794,7 +793,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
         if st.session_state.cbam_independent_docs:
             st.write(f"📂 **Załączone pliki ({len(st.session_state.cbam_independent_docs)} szt.):** " + ", ".join([d.name for d in st.session_state.cbam_independent_docs[:10]]) + ("..." if len(st.session_state.cbam_independent_docs) > 10 else ""))
 
-            if st.button("🚀 Uruchom Błyskawiczny Audyt Równoległy CBAM", type="primary", use_container_width=True):
+            if st.button("🚀 Uruchom Audyt CBAM", type="primary", use_container_width=True):
                 if not st.session_state.current_company:
                     st.error("Wybierz najpierw firmę w panelu bocznym.")
                 else:
@@ -806,14 +805,17 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                         status_text = st.empty()
                         total_files = len(st.session_state.cbam_independent_docs)
                         
-                        def process_single_file(f_item):
+                        for idx, f_item in enumerate(st.session_state.cbam_independent_docs):
+                            progress_bar.progress((idx + 1) / total_files)
+                            status_text.text(f"Analiza dokumentu {idx+1}/{total_files}: {f_item.name}...")
+                            
                             try:
                                 f_bytes = f_item.getvalue()
-                                if not f_bytes: return None
+                                if not f_bytes: continue
                                 ext = f_item.name.split(".")[-1].lower()
                                 
                                 file_contents_prompt = (
-                                    f"Jesteś precyzyjnym audytorem celnym CBAM. Analizujesz niemiecką odprawę celną lub dokument {f_item.name} dla firmy: {st.session_state.current_company}.\n"
+                                    f"Jesteś precyzyjnym audytorem celnym CBAM. Analizujesz dokument {f_item.name} dla firmy: {st.session_state.current_company}.\n"
                                     "Zwróć uwagę na niemieckie określenia (np. Netto-Masse, Eigenmasse, Rohmasse, Zoll).\n"
                                     "Wyciągnij wszystkie pozycje towarowe w formacie CSV ze średnikami (;):\n"
                                     "Nazwa_Produktu; Kod_TARIC; Masa_Netto_KG; Czy_CBAM_TAK_NIE; Kategoria_CBAM"
@@ -835,32 +837,20 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                                     
                                 res_file = safe_generate_content(client, selected_model, doc_parts)
                                 if res_file and res_file.text:
-                                    return f"\n--- PLIK: {f_item.name} ---\n" + res_file.text
-                            except Exception:
-                                pass
-                            return None
-
-                        completed_count = 0
-                        with ThreadPoolExecutor(max_workers=8) as executor:
-                            future_to_file = {executor.submit(process_single_file, f): f for f in st.session_state.cbam_independent_docs}
-                            for future in as_completed(future_to_file):
-                                completed_count += 1
-                                progress_bar.progress(completed_count / total_files)
-                                status_text.text(f"Przetwarzanie równoległe: ukończono {completed_count}/{total_files} plików...")
-                                res_text = future.result()
-                                if res_text:
-                                    all_extracted_rows.append(res_text)
+                                    all_extracted_rows.append(f"\n--- PLIK: {f_item.name} ---\n" + res_file.text)
+                            except Exception as e:
+                                st.warning(f"Ostrzeżenie przy pliku {f_item.name}: {str(e)}")
 
                         dzisiejsza_data = datetime.now().strftime("%d.%m.%Y")
-                        status_text.text("Generowanie ostatecznego raportu z precyzyjnym wyliczeniem wag i kosztów...")
+                        status_text.text("Generowanie ostatecznego raportu z wyliczeniem wag i kosztów...")
                         
                         summary_prompt = (
                             f"Jesteś głównym biegłym ds. celnych i CBAM dla firmy: {st.session_state.current_company}.\n"
                             f"Oficjalna data sporządzenia raportu to: {dzisiejsza_data}.\n"
-                            "Oto surowe dane wyciągnięte ze wszystkich wgranych niemieckich odpraw celnych i dokumentów:\n"
+                            "Oto surowe dane wyciągnięte ze wszystkich wgranych odpraw celnych i dokumentów:\n"
                             f"{' '.join(all_extracted_rows)}\n\n"
                             "BEZWZGLĘDNE ZASADY:\n"
-                            "1. Zsumuj masy netto ze wszystkich dokumentów. Pod żadnym pozorem nie zwracaj zerowych wartości ani wzorów LaTeX.\n"
+                            "1. Zsumuj masy netto ze wszystkich dokumentów. Pod żadnym pozorem nie zwracaj zerowych wartości.\n"
                             "2. Podaj ostateczną masę w kilogramach oraz tonach (z dokładnością do dwóch miejsc po przecinku) oraz realnie wyliczony koszt finansowy w EUR w oparciu o ceny EU ETS.\n"
                             f"3. W nagłówku raportu wpisz bezwzględnie dzisiejszą datę: {dzisiejsza_data}.\n"
                             "4. Stwórz szczegółową tabelę wyszczególniającą wyłącznie pozycje towarowe objęte CBAM (kolumny: [Nazwa Towaru | Kod TARIC/CN | Dokładna Masa Netto (kg) | Kategoria CBAM]).\n"
@@ -869,17 +859,14 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                         )
 
                         final_res = safe_generate_content(client, selected_model, [summary_prompt])
-                        
-                        # --- KLUCZOWA POPRAWKA: ZAPIS DO SESJI ---
                         st.session_state.cbam_indep_result = final_res.text
                         
                         status_text.empty()
                         progress_bar.empty()
-                        st.success("✅ Pomyślnie przetworzono odprawy celne równolegle i wygenerowano rzetelny raport CBAM!")
+                        st.success("✅ Pomyślnie przetworzono dokumenty i wygenerowano rzetelny raport CBAM!")
                     except Exception as e:
                         st.error(f"Błąd podczas audytu: {str(e)}")
 
-        # JAWNE WYŚWIETLENIE WYNIKU NA EKRANIE BEZPOŚREDNIO POD PRZYCISKIEM
         if "cbam_indep_result" in st.session_state and st.session_state.cbam_indep_result:
             st.markdown("---")
             st.markdown(f"### 📋 Wynik Niezależnego Audytu CBAM dla Firmy: {st.session_state.current_company}")
