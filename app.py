@@ -49,36 +49,40 @@ class StoredFile:
         with open(self.filepath, "rb") as f:
             return f.read()
 
-def load_projects():
-    projects = {}
+def load_companies_and_containers():
+    data_struct = {}
     if not os.path.exists(DATA_DIR):
-        return projects
-    for proj_name in os.listdir(DATA_DIR):
-        proj_dir = os.path.join(DATA_DIR, proj_name)
-        if os.path.isdir(proj_dir) and proj_name != "db_images":
-            json_path = os.path.join(proj_dir, "data.json")
-            data = {"out1": "", "out2": "", "out3": "", "calc_audit": "", "docs": [], "hs_approved": [], "cbam_data": "", "cbam_audit_result": ""}
-            if os.path.exists(json_path):
-                try:
-                    with open(json_path, "r", encoding="utf-8") as f:
-                        data.update(json.load(f))
-                except Exception:
-                    pass
-            docs_dir = os.path.join(proj_dir, "docs")
-            if os.path.exists(docs_dir):
-                for fname in os.listdir(docs_dir):
-                    fpath = os.path.join(docs_dir, fname)
-                    sf = StoredFile(fpath, fname)
-                    if sf.type != "unsupported":
-                        data["docs"].append(sf)
-            projects[proj_name] = data
-    return projects
+        return data_struct
+    for company_name in os.listdir(DATA_DIR):
+        comp_dir = os.path.join(DATA_DIR, company_name)
+        if os.path.isdir(comp_dir) and company_name != "db_images":
+            data_struct[company_name] = {}
+            for container_no in os.listdir(comp_dir):
+                cont_dir = os.path.join(comp_dir, container_no)
+                if os.path.isdir(cont_dir):
+                    json_path = os.path.join(cont_dir, "data.json")
+                    c_data = {"out1": "", "out2": "", "out3": "", "calc_audit": "", "docs": [], "hs_approved": [], "cbam_data": "", "cbam_audit_result": ""}
+                    if os.path.exists(json_path):
+                        try:
+                            with open(json_path, "r", encoding="utf-8") as f:
+                                c_data.update(json.load(f))
+                        except Exception:
+                            pass
+                    docs_dir = os.path.join(cont_dir, "docs")
+                    if os.path.exists(docs_dir):
+                        for fname in os.listdir(docs_dir):
+                            fpath = os.path.join(docs_dir, fname)
+                            sf = StoredFile(fpath, fname)
+                            if sf.type != "unsupported":
+                                c_data["docs"].append(sf)
+                    data_struct[company_name][container_no] = c_data
+    return data_struct
 
-def save_project(proj_name, data):
-    proj_dir = os.path.join(DATA_DIR, proj_name)
-    if not os.path.exists(proj_dir):
-        os.makedirs(proj_dir)
-    json_path = os.path.join(proj_dir, "data.json")
+def save_container_data(company_name, container_no, data):
+    cont_dir = os.path.join(DATA_DIR, company_name, container_no)
+    if not os.path.exists(cont_dir):
+        os.makedirs(cont_dir)
+    json_path = os.path.join(cont_dir, "data.json")
     save_data = {
         "out1": data.get("out1", ""),
         "out2": data.get("out2", ""),
@@ -91,9 +95,9 @@ def save_project(proj_name, data):
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(save_data, f, ensure_ascii=False, indent=2)
 
-def save_uploaded_files(proj_name, uploaded_files):
-    proj_dir = os.path.join(DATA_DIR, proj_name)
-    docs_dir = os.path.join(proj_dir, "docs")
+def save_uploaded_files(company_name, container_no, uploaded_files):
+    cont_dir = os.path.join(DATA_DIR, company_name, container_no)
+    docs_dir = os.path.join(cont_dir, "docs")
     if not os.path.exists(docs_dir):
         os.makedirs(docs_dir)
     saved_docs = []
@@ -124,11 +128,11 @@ def save_uploaded_files(proj_name, uploaded_files):
                 saved_docs.append(sf)
     return saved_docs
 
-def delete_project_file(proj_name):
+def delete_container_dir(company_name, container_no):
     import shutil
-    proj_dir = os.path.join(DATA_DIR, proj_name)
-    if os.path.exists(proj_dir):
-        shutil.rmtree(proj_dir)
+    cont_dir = os.path.join(DATA_DIR, company_name, container_no)
+    if os.path.exists(cont_dir):
+        shutil.rmtree(cont_dir)
 
 def safe_generate_content(client, model_name, contents, max_retries=3, initial_delay=2):
     for attempt in range(max_retries):
@@ -486,12 +490,18 @@ def call_ai_chunked_stage3(client, model_name, summary_df):
     return "\n".join(all_t3_rows)
 
 # --- SIDEBAR & STEROWANIE ---
-if "projects" not in st.session_state:
-    st.session_state.projects = load_projects()
+if "company_data" not in st.session_state:
+    st.session_state.company_data = load_companies_and_containers()
+
+if "current_company" not in st.session_state:
+    if st.session_state.company_data:
+        st.session_state.current_company = list(st.session_state.company_data.keys())[0]
+    else:
+        st.session_state.current_company = None
 
 if "current_container" not in st.session_state:
-    if st.session_state.projects:
-        st.session_state.current_container = list(st.session_state.projects.keys())[0]
+    if st.session_state.current_company and st.session_state.company_data[st.session_state.current_company]:
+        st.session_state.current_container = list(st.session_state.company_data[st.session_state.current_company].keys())[0]
     else:
         st.session_state.current_container = None
 
@@ -533,16 +543,17 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
         st.info("Ten etap korzysta z zatwierdzonych kodów HS oraz mas z aktywnego kontenera, aby wskazać towary objęte CBAM.")
 
         if not st.session_state.current_container:
-            st.warning("⚠️ Najpierw wybierz lub stwórz kontener w module głównym i przeprowadź taryfikację!")
+            st.warning("⚠️ Najpierw wybierz firmę, kontener w panelu głównym i przeprowadź taryfikację!")
         else:
+            cur_comp = st.session_state.current_company
             cur_con = st.session_state.current_container
-            proj_data = st.session_state.projects[cur_con]
+            proj_data = st.session_state.company_data[cur_comp][cur_con]
             
             if not proj_data.get("hs_approved"):
-                st.warning(f"⚠️ Brak zatwierdzonych kodów HS dla kontenera `{cur_con}`. Przejdź do modułu kontenerów i zatwierdź kody w Etapie 3.")
+                st.warning(f"⚠️ Brak zatwierdzonych kodów HS dla kontenera `{cur_con}` w firmie `{cur_comp}`. Przejdź do modułu kontenerów i zatwierdź kody w Etapie 3.")
             else:
                 df_approved = pd.DataFrame(proj_data["hs_approved"])
-                st.markdown(f"**Aktywny kontener:** `{cur_con}` | Liczba pozycji w bazie zatwierdzonych: `{len(df_approved)}`")
+                st.markdown(f"**Firma:** `{cur_comp}` | **Kontener:** `{cur_con}` | Liczba pozycji zatwierdzonych: `{len(df_approved)}`")
 
                 if st.button("⚡ Uruchom Analizę i Kalkulację Wagi CBAM (Etap 1)", type="primary"):
                     client = genai.Client(api_key=api_key)
@@ -558,7 +569,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                     with st.spinner("Analiza kodów i wyliczanie wag CBAM..."):
                         res_cbam1 = safe_generate_content(client, selected_model, prompt_cbam_e1)
                         proj_data["cbam_data"] = res_cbam1.text
-                        save_project(cur_con, proj_data)
+                        save_container_data(cur_comp, cur_con, proj_data)
                         st.success("✅ Analiza Etapu 1 zakończona pomyślnie!")
                         st.rerun()
 
@@ -568,7 +579,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
 
     else:
         st.subheader("🔍 Etap 2: Niezależny Audyt i Wyliczenie CBAM z Własnych Dokumentów Źródłowych")
-        st.info("Wgraj niezależne pliki handlowe lub odprawę celną (`报关单`), aby system przeanalizował je pod kątem CBAM niezależnie od zapisanych kontenerów.")
+        st.info("Wgraj niezależne pliki handlowe lub odprawę celną (`报关单`), aby system przeanalizował je pod kątem CBAM niezależnie.")
 
         if "cbam_independent_docs" not in st.session_state:
             st.session_state.cbam_independent_docs = []
@@ -894,44 +905,75 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
         )
 
 # ==============================================================================
-# MODUŁ 1: KONTENERY
+# MODUŁ 1: FIRMY I KONTENERY
 # ==============================================================================
 elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
-    st.sidebar.markdown("### 📦 Zarządzanie Kontenerami")
-    new_no = st.sidebar.text_input("Numer Nowego Kontenera", placeholder="np. CNEU4699420").upper().strip()
-    if st.sidebar.button("+ Dodaj Kontener", use_container_width=True):
-        if new_no:
-            if new_no not in st.session_state.projects:
-                st.session_state.projects[new_no] = {"docs": [], "out1": "", "out2": "", "out3": "", "calc_audit": "", "hs_approved": [], "cbam_data": "", "cbam_audit_result": ""}
-                save_project(new_no, st.session_state.projects[new_no])
-            st.session_state.current_container = new_no
-            st.sidebar.success(f"Aktywowano: {new_no}")
+    st.sidebar.markdown("### 🏢 Zarządzanie Firmami i Kontenerami")
+    
+    # 1. Zarządzanie Firmami
+    new_comp = st.sidebar.text_input("Nazwa Nowej Firmy", placeholder="np. Firma XYZ").strip()
+    if st.sidebar.button("+ Dodaj Firmę", use_container_width=True):
+        if new_comp:
+            if new_comp not in st.session_state.company_data:
+                st.session_state.company_data[new_comp] = {}
+            st.session_state.current_company = new_comp
+            st.session_state.current_container = None
+            st.sidebar.success(f"Aktywowano firmę: {new_comp}")
             st.rerun()
+
+    if st.session_state.company_data:
+        comp_list = list(st.session_state.company_data.keys())
+        curr_comp_idx = comp_list.index(st.session_state.current_company) if st.session_state.current_company in comp_list else 0
+        selected_comp = st.sidebar.selectbox("📂 Wybierz Firmę", options=comp_list, index=curr_comp_idx)
+        
+        if selected_comp != st.session_state.current_company:
+            st.session_state.current_company = selected_comp
+            containers_in_comp = list(st.session_state.company_data[selected_comp].keys())
+            st.session_state.current_container = containers_in_comp[0] if containers_in_comp else None
+            st.rerun()
+
+        st.sidebar.markdown("---")
+        
+        # 2. Zarządzanie Kontenerami w wybranej firmie
+        new_no = st.sidebar.text_input("Numer Kontenera dla tej firmy", placeholder="np. CNEU4699420").upper().strip()
+        if st.sidebar.button("+ Dodaj Kontener do Firmy", use_container_width=True):
+            if new_no:
+                if new_no not in st.session_state.company_data[st.session_state.current_company]:
+                    st.session_state.company_data[st.session_state.current_company][new_no] = {
+                        "docs": [], "out1": "", "out2": "", "out3": "", "calc_audit": "", "hs_approved": [], "cbam_data": "", "cbam_audit_result": ""
+                    }
+                    save_container_data(st.session_state.current_company, new_no, st.session_state.company_data[st.session_state.current_company][new_no])
+                st.session_state.current_container = new_no
+                st.sidebar.success(f"Aktywowano kontener: {new_no}")
+                st.rerun()
+
+        containers_dict = st.session_state.company_data[st.session_state.current_company]
+        if containers_dict:
+            cont_list = list(containers_dict.keys())
+            curr_cont_idx = cont_list.index(st.session_state.current_container) if st.session_state.current_container in cont_list else 0
+            selected_cont = st.sidebar.selectbox("📦 Wybierz Kontener", options=cont_list, index=curr_cont_idx)
+            st.session_state.current_container = selected_cont
+
+            if st.sidebar.button("❌ Usuń bieżący kontener", type="secondary", use_container_width=True):
+                delete_container_dir(st.session_state.current_company, st.session_state.current_container)
+                del st.session_state.company_data[st.session_state.current_company][st.session_state.current_container]
+                remaining = list(st.session_state.company_data[st.session_state.current_company].keys())
+                st.session_state.current_container = remaining[0] if remaining else None
+                st.rerun()
 
     st.sidebar.markdown("---")
     hs_db = load_hs_database()
     st.sidebar.markdown(f"**🗄️ Baza Wizualna HS:** `{len(hs_db)} wzorców`")
 
-    if st.session_state.projects:
-        proj_list = list(st.session_state.projects.keys())
-        curr_idx = proj_list.index(st.session_state.current_container) if st.session_state.current_container in proj_list else 0
-        selected_proj = st.sidebar.selectbox("Zapisane Kontenery", options=proj_list, index=curr_idx)
-        st.session_state.current_container = selected_proj
-
-        if st.sidebar.button("❌ Usuń bieżący projekt", type="secondary", use_container_width=True):
-            delete_project_file(st.session_state.current_container)
-            del st.session_state.projects[st.session_state.current_container]
-            st.session_state.current_container = list(st.session_state.projects.keys())[0] if st.session_state.projects else None
-            st.rerun()
-
-    if not st.session_state.current_container:
-        st.title("Genius AI BOT — Gotowy do Pracy")
-        st.info("Wpisz numer kontenera w panelu po lewej stronie i kliknij **+ Dodaj Kontener**, aby rozpocząć.")
+    if not st.session_state.current_company or not st.session_state.current_container:
+        st.title("Genius AI BOT — Wybierz Firmę i Kontener")
+        st.info("W panelu bocznym dodaj lub wybierz **Firmę**, a następnie utwórz lub wybierz w jej podkatalogu **Kontener**, aby rozpocząć pracę.")
     else:
+        cur_comp = st.session_state.current_company
         cur_no = st.session_state.current_container
-        proj = st.session_state.projects[cur_no]
+        proj = st.session_state.company_data[cur_comp][cur_no]
 
-        st.title(f"Genius AI BOT | Kontener: `{cur_no}`")
+        st.title(f"Genius AI BOT | Firma: `{cur_comp}` ➔ Kontener: `{cur_no}`")
 
         uploaded_files = st.file_uploader(
             "1. Dokumenty Ładunkowe (Wgraj plik ZIP lub pojedyncze CI, PL, BL, Odprawa Chińska / 报关单, Excel)",
@@ -940,7 +982,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
         )
 
         if uploaded_files:
-            saved_docs = save_uploaded_files(cur_no, uploaded_files)
+            saved_docs = save_uploaded_files(cur_comp, cur_no, uploaded_files)
             proj["docs"] = saved_docs
             st.success(f"Zapisano i załączono dokumenty: łączna liczba plików to {len(proj['docs'])}")
         elif proj.get("docs"):
@@ -1029,7 +1071,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                             pass
                         proj["out3"] = res3
 
-                save_project(cur_no, proj)
+                save_container_data(cur_comp, cur_no, proj)
                 st.success("✅ Pełna analiza zakończona pomyślnie!")
                 st.rerun()
 
@@ -1047,7 +1089,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
             st.subheader("📋 Audyt Formalny i Krzyżowa Kontrola z Odprawą Chińską")
             if st.button("Wykonaj Kontrolę Formalną", key="b1"):
                 res = call_ai(PROMPT_ETAP1)
-                if res: proj["out1"] = res; save_project(cur_no, proj); st.rerun()
+                if res: proj["out1"] = res; save_container_data(cur_comp, cur_no, proj); st.rerun()
             if proj.get("out1"):
                 st.markdown("---")
                 col_title, col_pdf = st.columns([3, 1])
@@ -1055,7 +1097,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                 with col_pdf:
                     if FPDF_AVAILABLE:
                         pdf_bytes = generate_formal_pdf_report(cur_no, proj["out1"])
-                        st.download_button("📄 Pobierz Raport PDF (.pdf)", data=pdf_bytes, file_name=f"Raport_Formalny_{cur_no}.pdf", mime="application/pdf", use_container_width=True)
+                        st.download_button("📄 Pobierz Raport PDF (.pdf)", data=pdf_bytes, file_name=f"Raport_Formalny_{cur_comp}_{cur_no}.pdf", mime="application/pdf", use_container_width=True)
                 st.markdown(proj["out1"])
 
         elif selected_tab == "🧩 2. Zbijanie Pozycji":
@@ -1073,7 +1115,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                     raw_ocr_text = call_ai(p2)
                     if raw_ocr_text:
                         res = call_ai_chunked_stage2(client_obj, selected_model, p2, raw_ocr_text)
-                        if res: proj["out2"] = res; save_project(cur_no, proj); st.rerun()
+                        if res: proj["out2"] = res; save_container_data(cur_comp, cur_no, proj); st.rerun()
             
             if proj.get("out2"):
                 try:
@@ -1109,7 +1151,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                         audit_res = call_ai(audit_prompt, "Audytor niezależnie weryfikuje rozbieżności sztuk i kartonów...")
                         if audit_res:
                             proj["calc_audit"] = audit_res
-                            save_project(cur_no, proj)
+                            save_container_data(cur_comp, cur_no, proj)
                             st.rerun()
 
                     if proj.get("calc_audit"):
@@ -1123,7 +1165,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                     output = BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         df_excel.to_excel(writer, index=False, sheet_name='Zbicie Pozycji')
-                    st.download_button("📊 Pobierz zweryfikowany plik Excel (.xlsx)", data=output.getvalue(), file_name=f"Genius_AI_Zbicie_{cur_no}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                    st.download_button("📊 Pobierz zweryfikowany plik Excel (.xlsx)", data=output.getvalue(), file_name=f"Genius_AI_Zbicie_{cur_comp}_{cur_no}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                 except Exception as e:
                     st.error(f"Błąd przetwarzania matematycznego: {str(e)}")
 
@@ -1149,7 +1191,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                             if "Opcjonalne Tłumaczenie" not in df_temp_t3.columns:
                                 df_temp_t3.insert(4, "Opcjonalne Tłumaczenie", translations)
                             proj["out3"] = df_temp_t3.to_csv(index=False, sep=";")
-                            save_project(cur_no, proj)
+                            save_container_data(cur_comp, cur_no, proj)
                             st.rerun()
                     except Exception as e:
                         st.error(f"Błąd: {str(e)}")
@@ -1225,7 +1267,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                         if st.button("💾 Zatwierdź Kody HS dla Urzędu Celnego i Zapisz do Bazy", type="primary"):
                             records = edited_df.to_dict(orient="records")
                             proj["hs_approved"] = records
-                            save_project(cur_no, proj)
+                            save_container_data(cur_comp, cur_no, proj)
                             added = update_hs_database_from_records(records, upload_db_img)
                             st.success(f"✅ Zatwierdzono! Dodano/zaktualizowano {added} wzorców w Wizualnej Bazie (wg 3 parametrów).")
                             st.rerun()
@@ -1237,6 +1279,6 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                             out_final_excel = BytesIO()
                             with pd.ExcelWriter(out_final_excel, engine='openpyxl') as writer:
                                 df_approved.to_excel(writer, index=False, sheet_name='HS_CODE_APPROVED')
-                            st.download_button("🏛️ Pobierz Zgodę Celną Excel (.xlsx)", data=out_final_excel.getvalue(), file_name=f"HS_APPROVED_{cur_no}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                            st.download_button("🏛️ Pobierz Zgodę Celną Excel (.xlsx)", data=out_final_excel.getvalue(), file_name=f"HS_APPROVED_{cur_comp}_{cur_no}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
                     except Exception as e:
                         st.error(f"Błąd parsowania taryfikacji: {str(e)}")
