@@ -869,7 +869,10 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                         )
 
                         final_res = safe_generate_content(client, selected_model, [summary_prompt])
+                        
+                        # --- KLUCZOWA POPRAWKA: ZAPIS DO SESJI ---
                         st.session_state.cbam_indep_result = final_res.text
+                        
                         status_text.empty()
                         progress_bar.empty()
                         st.success("✅ Pomyślnie przetworzono odprawy celne równolegle i wygenerowano rzetelny raport CBAM!")
