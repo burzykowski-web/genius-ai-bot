@@ -857,6 +857,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                         status_text.empty()
                         progress_bar.empty()
                         st.success("✅ Pomyślnie przeanalizowano wszystkie pliki i wygenerowano raport CBAM!")
+                        st.rerun()
                     except Exception as e:
                         st.error(f"Błąd podczas audytu: {str(e)}")
 
