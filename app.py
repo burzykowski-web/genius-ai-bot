@@ -281,30 +281,58 @@ def process_stage_2_dataframe(out2_text):
     clean_csv = out2_text.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
     valid_lines = []
     for line in clean_csv.split('\n'):
-        if line.count(';') >= 8 or "POS" in line or "pos" in line:
+        if line.count(';') >= 4 or "POS" in line or "pos" in line or "Product" in line:
             valid_lines.append(line)
     
-    df_raw = pd.read_csv(StringIO("\n".join(valid_lines)), sep=";", on_bad_lines='skip')
+    if not valid_lines:
+        return pd.DataFrame(columns=["pos", "Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE", "CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)", "Waluta"])
+        
+    try:
+        df_raw = pd.read_csv(StringIO("\n".join(valid_lines)), sep=";", on_bad_lines='skip')
+    except Exception:
+        return pd.DataFrame()
+    
+    # Zabezpieczenie nazw kolumn (usuwanie białych znaków)
+    df_raw.columns = [str(c).strip() for c in df_raw.columns]
     
     for col in df_raw.select_dtypes(include=['object']).columns:
         df_raw[col] = df_raw[col].astype(str).str.strip()
+
+    # Automatyczne mapowanie brakujących kolumn
+    if "POS" not in df_raw.columns and "pos" in df_raw.columns:
+        df_raw["POS"] = df_raw["pos"]
+    elif "POS" not in df_raw.columns:
+        df_raw["POS"] = range(1, len(df_raw) + 1)
+
+    if "Product_Name" not in df_raw.columns:
+        for possible in ["Nazwa", "Product", "Towar", "Description"]:
+            if possible in df_raw.columns:
+                df_raw["Product_Name"] = df_raw[possible]
+                break
+        if "Product_Name" not in df_raw.columns:
+            df_raw["Product_Name"] = "Towar"
+
+    if "Material" not in df_raw.columns:
+        for possible in ["Skład", "Material", "Materiały"]:
+            if possible in df_raw.columns:
+                df_raw["Material"] = df_raw[possible]
+                break
+        if "Material" not in df_raw.columns:
+            df_raw["Material"] = "N/D"
+
+    if "Waluta" not in df_raw.columns:
+        df_raw["Waluta"] = "EUR"
 
     num_cols = ["CTNS", "Quantity", "NW_KGS", "GW_KGS", "Amount"]
     for col in num_cols:
         if col in df_raw.columns:
             df_raw[col] = df_raw[col].astype(str).str.replace(",", ".").str.extract(r"(\d+\.?\d*)")[0].astype(float).fillna(0)
+        else:
+            df_raw[col] = 0.0
     
     df_raw["POS"] = df_raw["POS"].astype(str)
-    
-    if "Product_Name" in df_raw.columns:
-        df_raw["Clean_Name"] = df_raw["Product_Name"].astype(str).str.strip().str.lower()
-    else:
-        df_raw["Clean_Name"] = "towar"
-
-    if "Material" in df_raw.columns:
-        df_raw["Clean_Mat"] = df_raw["Material"].astype(str).str.strip().str.lower()
-    else:
-        df_raw["Clean_Mat"] = "n/d"
+    df_raw["Clean_Name"] = df_raw["Product_Name"].astype(str).str.strip().str.lower()
+    df_raw["Clean_Mat"] = df_raw["Material"].astype(str).str.strip().str.lower()
 
     if "HS_CODE" in df_raw.columns:
         df_raw["HS_CODE"] = df_raw["HS_CODE"].astype(str).str.replace(r"\D", "", regex=True).str[:8]
@@ -312,7 +340,7 @@ def process_stage_2_dataframe(out2_text):
         df_raw["HS_CODE"] = ""
 
     grouped = df_raw.groupby(["Clean_Name", "Clean_Mat", "Waluta"], as_index=False).agg({
-        "POS": lambda x: ", ".join(sorted(set(x), key=lambda v: int(v) if v.isdigit() else v)),
+        "POS": lambda x: ", ".join(sorted(set(x), key=lambda v: int(v) if str(v).isdigit() else v)),
         "Product_Name": "first",
         "Material": "first",
         "HS_CODE": lambda x: " | ".join(sorted(set(str(v) for v in x if pd.notna(v) and str(v).strip() != '' and str(v).lower() != 'nan'))),
@@ -324,7 +352,7 @@ def process_stage_2_dataframe(out2_text):
     })
     
     grouped["pos"] = range(1, len(grouped) + 1)
-    grouped = grouped[["pos", "POS", "Product_Name", "Material", "HS_CODE", "CTNS", "Quantity", "N.W KGS", "G.W KGS", "Amount (EUR)", "Waluta"]]
+    grouped = grouped[["pos", "POS", "Product_Name", "Material", "HS_CODE", "CTNS", "Quantity", "NW_KGS", "GW_KGS", "Amount", "Waluta"]]
     grouped.columns = ["pos", "Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE", "CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)", "Waluta"]
     return grouped
 
@@ -332,7 +360,7 @@ def parse_stage_3_csv(csv_text):
     clean_csv = csv_text.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
     valid_lines = []
     for line in clean_csv.split('\n'):
-        if line.count(';') >= 7 or "pos;" in line or "POS;" in line:
+        if line.count(';') >= 5 or "pos;" in line or "POS;" in line:
             valid_lines.append(line)
     try:
         return pd.read_csv(StringIO("\n".join(valid_lines)), sep=";", on_bad_lines='skip')
@@ -340,12 +368,12 @@ def parse_stage_3_csv(csv_text):
         rows = []
         for line in valid_lines[1:]:
             parts = line.split(';')
-            if len(parts) >= 8:
+            if len(parts) >= 6:
                 rows.append({
                     "pos": parts[0],
-                    "Invoice Positions": parts[1],
-                    "Nazwa Produktu": parts[2],
-                    "Skład Materiałowy": parts[3],
+                    "Invoice Positions": parts[1] if len(parts) > 1 else "",
+                    "Nazwa Produktu": parts[2] if len(parts) > 2 else "",
+                    "Skład Materiałowy": parts[3] if len(parts) > 3 else "",
                     "Opcjonalne Tłumaczenie": parts[4] if len(parts) > 4 else "",
                     "TARIC_PROPOSED": parts[5] if len(parts) > 5 else "",
                     "CN_HS_CODE": parts[6] if len(parts) > 6 else "",
@@ -446,7 +474,7 @@ def call_ai_chunked_stage2(client, model_name, base_prompt, full_dataframe_text)
                     if not combined_csv_rows:
                         combined_csv_rows.append(r_line)
                 else:
-                    if r_line.strip() and r_line.count(';') >= 5:
+                    if r_line.strip() and r_line.count(';') >= 4:
                         combined_csv_rows.append(r_line)
         except Exception as e:
             st.warning(f"Ostrzeżenie przy paczce {idx+1}: {str(e)}")
@@ -482,7 +510,7 @@ def call_ai_chunked_stage3(client, model_name, summary_df):
                     if not all_t3_rows:
                         all_t3_rows.append(r_line)
                 else:
-                    if r_line.strip() and r_line.count(';') >= 5:
+                    if r_line.strip() and r_line.count(';') >= 4:
                         all_t3_rows.append(r_line)
         except Exception as e:
             st.warning(f"Ostrzeżenie taryfikacji w paczce {idx+1}: {str(e)}")
