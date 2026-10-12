@@ -198,6 +198,19 @@ def update_hs_database_from_records(records, image_file=None):
         save_hs_database(db)
     return updated_count
 
+def process_excel_all_sheets(f_bytes):
+    try:
+        xl = pd.ExcelFile(BytesIO(f_bytes))
+        combined_str = ""
+        for sheet_name in xl.sheet_names:
+            df_sheet = xl.parse(sheet_name)
+            if len(df_sheet) > 1000:
+                df_sheet = df_sheet.head(1000)
+            combined_str += f"\n=== ZAKŁADKA / ARKUSZ: {sheet_name} ===\n" + df_sheet.to_string() + "\n"
+        return combined_str
+    except Exception as e:
+        return f"[Błąd odczytu pliku Excel: {str(e)}]"
+
 def process_intrastat_dataframe(text_data):
     clean_csv = text_data.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
     valid_lines = [line for line in clean_csv.split('\n') if line.count(';') >= 5 or "Nr_Faktury" in line or "Faktura" in line]
@@ -604,7 +617,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                         client = genai.Client(api_key=api_key)
                         prompt_cbam_indep_audit = (
                             "Jesteś niezależnym biegłym ds. audytu celnego i sprawozdawczości CBAM.\n"
-                            "Przeanalizuj wszystkie wgrane powyżej pliki (Commercial Invoice, Packing List, Odprawę Chińską / 报关单 itp., w tym wszystkie zakładki w plikach Excel).\n"
+                            "Przeanalizuj poniższe dane źródłowe ze wszystkich wgranych dokumentów i zakładek Excel:\n"
                             "Dokonaj niezależnego wyliczenia:\n"
                             "1. Wskaź towary objęte unijnym rozporządzeniem CBAM (stal, żelazo, aluminium, nawozy itp.).\n"
                             "2. Sprawdź i porównaj masy netto dla tych pozycji w dokumentach źródłowych.\n"
@@ -616,8 +629,8 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                             f_bytes = f.getvalue()
                             ext = f.name.split(".")[-1].lower()
                             if ext in ["xlsx", "xls"]:
-                                # Wysyłamy plik Excel bezpośrednio jako dokument binarny do modelu, co eliminuje błędy tokenów tekstowych
-                                contents.append(types.Part.from_bytes(data=f_bytes, mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                                excel_text = process_excel_all_sheets(f_bytes)
+                                contents.append(f"\n--- ZAWARTOŚĆ PLIKU EXCEL ({f.name} - wszystkie zakładki) ---\n" + excel_text + "\n")
                             elif ext == "pdf":
                                 contents.append(types.Part.from_bytes(data=f_bytes, mime_type="application/pdf"))
                             elif ext in ["jpg", "jpeg"]:
@@ -672,14 +685,15 @@ elif app_mode == "🗄️ Wizualna Baza Kodów HS":
                                 db_current.update(imported_json)
                                 total_imported += len(imported_json)
                         elif ext in ["xlsx", "xls"]:
+                            excel_text = process_excel_all_sheets(f_bytes)
                             prompt_excel_import = (
-                                "Jesteś analitykiem celnym. Przeanalizuj dołączony plik Excel (wszystkie jego zakładki).\n"
+                                "Jesteś analitykiem celnym. Przeanalizuj poniższe dane z pliku Excel (wszystkie zakładki):\n"
+                                f"{excel_text}\n\n"
                                 "Wyciągnij każdą pozycję taryfową i zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) w pierwszej linii bez dodatkowego markdown:\n"
                                 "Nazwa_Produktu;Sklad_Materialowy;Kod_TARIC;Opis_CN;Tlumaczenie"
                             )
-                            contents = [prompt_excel_import, types.Part.from_bytes(data=f_bytes, mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")]
                             with st.spinner(f"Odczytywanie pliku Excel: {imp_f.name}..."):
-                                res_exc = safe_generate_content(client, selected_model, contents)
+                                res_exc = safe_generate_content(client, selected_model, [prompt_excel_import])
                                 clean_csv_exc = res_exc.text.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
                                 for line in clean_csv_exc.split('\n'):
                                     if "Nazwa_Produktu" in line or line.count(';') < 2:
@@ -832,7 +846,7 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
                 client = genai.Client(api_key=api_key)
                 prompt_intra = (
                     "Jesteś precyzyjnym systemem OCR do faktur handlowych dla Intrastat.\n"
-                    "Przeanalizuj wszystkie pliki oraz wszystkie zakładki w plikach Excel.\n"
+                    "Przeanalizuj poniższe dane ze wszystkich wgranych plików i zakładek Excel.\n"
                     "ZASADA BEZWZGLĘDNA: Odczytaj dokładnie numery faktur, kontrahentów, daty, NIP-y, wartości oraz kody CN.\n"
                     "Zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) i kropką jako separatorem dziesiętnym w pierwszej linii:\n"
                     "Sprzedawca_Nazwa;Sprzedawca_NIP;Sprzedawca_Kraj;Sprzedawca_Ulica;Sprzedawca_Kod;Sprzedawca_Miasto;Nr_Faktury;Data_Faktury;Nabywca_Nazwa;Nabywca_NIP;Nabywca_Kraj;Nabywca_Ulica;Nabywca_Kod;Nabywca_Miasto;Kod_CN;Opis_Towaru;Ilosc_Sztuk;Masa_Netto_KG;Wartosc_PLN"
@@ -843,7 +857,8 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
                     f_bytes = f.getvalue()
                     ext = f.name.split(".")[-1].lower()
                     if ext in ["xlsx", "xls"]:
-                        contents.append(types.Part.from_bytes(data=f_bytes, mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                        excel_text = process_excel_all_sheets(f_bytes)
+                        contents.append(f"\n--- ZAWARTOŚĆ PLIKU EXCEL ({f.name} - wszystkie zakładki) ---\n" + excel_text + "\n")
                     elif ext == "pdf":
                         contents.append(types.Part.from_bytes(data=f_bytes, mime_type="application/pdf"))
                     elif ext in ["jpg", "jpeg"]:
@@ -939,7 +954,8 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                 contents = [prompt]
                 for f in proj["docs"]:
                     if f.type == "spreadsheet":
-                        contents.append(types.Part.from_bytes(data=f.getvalue(), mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                        excel_text = process_excel_all_sheets(f.getvalue())
+                        contents.append(f"\n--- ZAWARTOŚĆ PLIKU EXCEL ({f.name} - wszystkie zakładki) ---\n" + excel_text + "\n")
                     elif f.type == "application/pdf":
                         contents.append(types.Part.from_bytes(data=f.getvalue(), mime_type="application/pdf"))
                     elif f.type in ["image/jpeg", "application/png"]:
@@ -953,7 +969,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
 
         PROMPT_ETAP1 = (
             "Jesteś bezwzględnym i niezwykle skrupulatnym starszym audytorem celnym w Genius Logistics.\n"
-            "Przeanalizuj wszystkie dokumenty oraz wszystkie zakładki w plikach Excel.\n"
+            "Przeanalizuj poniższe dane ze wszystkich dokumentów oraz wszystkich zakładek w plikach Excel.\n"
             "Twoim zadaniem jest przeprowadzenie rygorystycznej KONTROLI FORMALNEJ I KRZYŻOWEJ (Cross-Check).\n\n"
             "BEZWZGLĘDNY WYMÓG ROZDZIELNEJ KONTROLI ILOŚCI I KARTONÓW:\n"
             "1. SZTUKI (Quantity / pcs): Porównaj pozycję po pozycji liczbę sztuk na Fakturze z liczbą sztuk na Liście Pakującej oraz Odprawie Chińskiej.\n"
@@ -977,7 +993,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                 if res1: proj["out1"] = res1
 
                 p2 = (
-                    "Jesteś precyzyjnym skanerem OCR. Przeanalizuj wszystkie dokumenty i wszystkie zakładki w plikach Excel.\n"
+                    "Jesteś precyzyjnym skanerem OCR. Przeanalizuj poniższe dane z dokumentów oraz ze wszystkich zakładek Excel.\n"
                     "Odczytaj KAŻDĄ pozycję faktury/PL/Odprawy Chińskiej/tabeli z osobna.\n"
                     "ZASADA BEZWZGLĘDNA: Oddziel nazwę produktu od składu materiałowego (np. materiały takie jak: PU, IRON, WOOD, STEEL, PPE, PLASTIC itp.).\n"
                     "Zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) i kropką jako separatorem dziesiętnym w pierwszej linii:\n"
@@ -1046,7 +1062,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
             st.subheader("🧩 Agregacja Pozycji (Rozdzielenie Nazwy i Materiału)")
             if st.button("Wykonaj Zbijanie Pozycji", key="b2"):
                 p2 = (
-                    "Jesteś precyzyjnym skanerem OCR. Przeanalizuj wszystkie dokumenty i wszystkie zakładki w plikach Excel.\n"
+                    "Jesteś precyzyjnym skanerem OCR. Przeanalizuj poniższe dane z dokumentów i ze wszystkich zakładek Excel.\n"
                     "Odczytaj KAŻDĄ pozycję faktury/PL z osobna.\n"
                     "Oddziel nazwę produktu od składu materiałowego (np. PU, IRON, WOOD, STEEL, PPE).\n"
                     "Zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) i kropką jako separatorem dziesiętnym w pierwszej linii:\n"
