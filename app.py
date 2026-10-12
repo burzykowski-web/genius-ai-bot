@@ -849,27 +849,28 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                                     all_extracted_rows.append(res_text)
 
                         dzisiejsza_data = datetime.now().strftime("%d.%m.%Y")
-                        status_text.text("Generowanie ostatecznego raportu, wyszczególnienia CBAM i wyliczeń finansowych...")
+                        status_text.text("Generowanie ostatecznego raportu z rygorystyczną weryfikacją wag...")
                         
                         summary_prompt = (
-                            f"Jesteś głównym biegłym ds. CBAM dla firmy: {st.session_state.current_company}.\n"
+                            f"Jesteś głównym biegłym ds. celnych i CBAM dla firmy: {st.session_state.current_company}.\n"
                             f"Oficjalna data sporządzenia raportu to: {dzisiejsza_data}.\n"
-                            "Oto zsumowane dane wyciągnięte ze wszystkich wgranych niemieckich odpraw celnych i dokumentów:\n"
+                            "Oto surowe dane wyciągnięte ze wszystkich wgranych niemieckich odpraw celnych i dokumentów:\n"
                             f"{' '.join(all_extracted_rows)}\n\n"
-                            "Zadanie:\n"
-                            f"1. W nagłówku raportu wpisz bezwzględnie dzisiejszą datę: {dzisiejsza_data}.\n"
-                            "2. Zbierz i zsumuj dokładne masy netto wszystkich towarów.\n"
-                            "3. **Stwórz osobną, szczegółową tabelę wyszczególniającą wyłącznie pozycje towarowe objęte CBAM** (kolumny: [Nazwa Towaru | Kod TARIC/CN | Masa Netto (kg) | Kategoria CBAM]).\n"
-                            "4. Podsumuj łączną masę towarów CBAM w kilogramach oraz tonach i jednoznacznie odpowiedz, czy przekroczono próg zwolnienia de minimis wynoszący 50 ton rocznie (TAK / NIE).\n"
-                            "5. **Dokonaj wyliczenia szacunkowego (kalkulacji finansowej)**: na podstawie mas towarów CBAM i aktualnych uśrednionych unijnych cen uprawnień EU ETS, podaj szacunkową wartość/koszt finansowy (w EUR), jaki wiąże się z tymi emisjami w ramach mechanizmu CBAM.\n"
-                            "6. Przygotuj profesjonalny, czytelny raport w formacie Markdown."
+                            "BEZWZGLĘDNE ZASADY MATEMATYCZNE (ZAKAZ HALUCYNACJI I ZAOKRĄGLEŃ):\n"
+                            "1. **Zero domysłów i zero sztucznych ton**: Zabrania się dowiązywania, szacowania lub dodawania jakichkolwiek 'marginesów błędu' (w tym wymyślonych 10 ton). Masz zsumować wyłącznie to, co fizycznie znajduje się w kolumnach mas netto w plikach źródłowych.\n"
+                            "2. **Dokładność co do kilograma**: Zsumuj dokładną masę netto (Netto-Masse / Eigenmasse) dla każdej pozycji w kilogramach, a następnie przelicz na tony z dokładnością do dwóch miejsc po przecinku.\n"
+                            f"3. W nagłówku raportu wpisz bezwzględnie dzisiejszą datę: {dzisiejsza_data}.\n"
+                            "4. **Stwórz szczegółową tabelę wyszczególniającą wyłącznie pozycje towarowe objęte CBAM** (kolumny: [Nazwa Towaru | Kod TARIC/CN | Dokładna Masa Netto (kg) | Kategoria CBAM]).\n"
+                            "5. Podsumuj łączną masę towarów CBAM w kilogramach oraz tonach i jednoznacznie odpowiedz, czy przekroczono próg zwolnienia de minimis wynoszący 50 ton rocznie (TAK / NIE).\n"
+                            "6. Dokonaj wyliczenia szacunkowego kosztu finansowego (w EUR) na bazie dokładnych wag i cen EU ETS.\n"
+                            "7. Przygotuj profesjonalny, czytelny raport w formacie Markdown."
                         )
 
                         final_res = safe_generate_content(client, selected_model, [summary_prompt])
                         st.session_state.cbam_indep_result = final_res.text
                         status_text.empty()
                         progress_bar.empty()
-                        st.success("✅ Pomyślnie przetworzono odprawy celne równolegle i wygenerowano raport CBAM!")
+                        st.success("✅ Pomyślnie przetworzono odprawy celne równolegle i wygenerowano rzetelny raport CBAM!")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Błąd podczas audytu: {str(e)}")
