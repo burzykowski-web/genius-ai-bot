@@ -292,13 +292,11 @@ def process_stage_2_dataframe(out2_text):
     except Exception:
         return pd.DataFrame()
     
-    # Zabezpieczenie nazw kolumn (usuwanie białych znaków)
     df_raw.columns = [str(c).strip() for c in df_raw.columns]
     
     for col in df_raw.select_dtypes(include=['object']).columns:
         df_raw[col] = df_raw[col].astype(str).str.strip()
 
-    # Automatyczne mapowanie brakujących kolumn
     if "POS" not in df_raw.columns and "pos" in df_raw.columns:
         df_raw["POS"] = df_raw["pos"]
     elif "POS" not in df_raw.columns:
@@ -400,6 +398,25 @@ class CustomPDF(FPDF):
         self.set_text_color(113, 128, 150)
         self.cell(0, 8, f'Strona {self.page_no()} | Genius Logistics Sp. z o.o.', align='C')
 
+class CBAMCustomPDF(FPDF):
+    def header(self):
+        self.set_font('Helvetica', 'B', 13)
+        self.set_text_color(26, 54, 93)
+        self.cell(0, 8, 'RAPORT ANALIZY I AUDYTU CBAM', ln=1)
+        self.set_font('Helvetica', 'B', 9)
+        self.set_text_color(74, 85, 104)
+        self.cell(0, 5, 'Genius AI BOT | Unijny Mechanizm Dostosowywania Cen na Granicach', ln=1)
+        self.set_draw_color(43, 108, 176)
+        self.set_line_width(0.6)
+        self.line(10, 24, 200, 24)
+        self.ln(6)
+
+    def footer(self):
+        self.set_y(-12)
+        self.set_font('Helvetica', 'I', 8)
+        self.set_text_color(113, 128, 150)
+        self.cell(0, 8, f'Strona {self.page_no()} | Genius Logistics Sp. z o.o.', align='C')
+
 def generate_formal_pdf_report(container_no, markdown_content):
     if not FPDF_AVAILABLE: return None
     pdf = CustomPDF()
@@ -413,6 +430,53 @@ def generate_formal_pdf_report(container_no, markdown_content):
     pdf.set_font('Helvetica', 'B', 9)
     pdf.set_text_color(44, 82, 130)
     clean_meta = f'KONTENER: {container_no} | STATUS: AUDYT ZAKONCZONY'
+    pdf.cell(0, 6, clean_meta.encode('latin-1', 'replace').decode('latin-1'), ln=1)
+    pdf.ln(6)
+    lines = markdown_content.split('\n')
+    for line in lines:
+        clean_line = line.strip()
+        if not clean_line:
+            pdf.ln(2)
+            continue
+        clean_line = re.sub(r'[^\x00-\x7F\xC0-\xFF]', '', clean_line).strip()
+        if not clean_line: continue
+        if clean_line.startswith('###'):
+            pdf.ln(3)
+            pdf.set_font('Helvetica', 'B', 10)
+            pdf.set_text_color(44, 82, 130)
+            txt = clean_line.replace('###', '').strip().encode('latin-1', 'replace').decode('latin-1')
+            pdf.multi_cell(186, 5, txt)
+            pdf.ln(1)
+            pdf.set_font('Helvetica', '', 9)
+            pdf.set_text_color(45, 55, 72)
+        elif clean_line.startswith('-') or clean_line.startswith('*'):
+            pdf.set_font('Helvetica', '', 9)
+            pdf.set_text_color(45, 55, 72)
+            text = clean_line[1:].strip()
+            text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
+            txt = f' - {text}'.encode('latin-1', 'replace').decode('latin-1')
+            pdf.multi_cell(186, 4.5, txt)
+        else:
+            pdf.set_font('Helvetica', '', 9)
+            pdf.set_text_color(45, 55, 72)
+            text = re.sub(r'\*\*(.*?)\*\*', r'\1', clean_line)
+            txt = text.encode('latin-1', 'replace').decode('latin-1')
+            pdf.multi_cell(186, 4.5, txt)
+    return pdf.output()
+
+def generate_cbam_pdf_report(company_name, markdown_content):
+    if not FPDF_AVAILABLE: return None
+    pdf = CBAMCustomPDF()
+    pdf.set_margins(12, 12, 12)
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_fill_color(235, 248, 255)
+    pdf.set_draw_color(49, 130, 206)
+    pdf.rect(12, 26, 186, 10, style='DF')
+    pdf.set_xy(14, 28)
+    pdf.set_font('Helvetica', 'B', 9)
+    pdf.set_text_color(44, 82, 130)
+    clean_meta = f'FIRMA: {company_name} | RAPORT SPRAWOZDAWCZY CBAM'
     pdf.cell(0, 6, clean_meta.encode('latin-1', 'replace').decode('latin-1'), ln=1)
     pdf.ln(6)
     lines = markdown_content.split('\n')
@@ -638,6 +702,10 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                 if proj_data.get("cbam_data"):
                     st.markdown("### 📋 Wynik Analizy CBAM (Etap 1)")
                     st.markdown(proj_data["cbam_data"])
+                    st.markdown("---")
+                    if FPDF_AVAILABLE:
+                        cbam_pdf_bytes = generate_cbam_pdf_report(cur_comp, proj_data["cbam_data"])
+                        st.download_button("📄 Pobierz Raport CBAM (Etap 1) w formacie PDF", data=cbam_pdf_bytes, file_name=f"Raport_CBAM_Etap1_{cur_comp}_{selected_cbam_cont}.pdf", mime="application/pdf", use_container_width=True)
 
     else:
         st.subheader("🔍 Etap 2: Niezależny Audyt i Wyliczenie CBAM z Własnych Dokumentów Źródłowych")
@@ -724,6 +792,10 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
             st.markdown("---")
             st.markdown(f"### 📋 Wynik Niezależnego Audytu CBAM dla Firmy: {st.session_state.current_company}")
             st.markdown(st.session_state.cbam_indep_result)
+            st.markdown("---")
+            if FPDF_AVAILABLE:
+                cbam_indep_pdf_bytes = generate_cbam_pdf_report(st.session_state.current_company, st.session_state.cbam_indep_result)
+                st.download_button("📄 Pobierz Niezależny Raport CBAM (Etap 2) w formacie PDF", data=cbam_indep_pdf_bytes, file_name=f"Raport_CBAM_Etap2_{st.session_state.current_company}.pdf", mime="application/pdf", use_container_width=True)
 
 # ==============================================================================
 # MODUŁ 3: WIZUALNA BAZA KODÓW HS
