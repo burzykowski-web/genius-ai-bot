@@ -859,11 +859,11 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                             f"Oficjalna data sporządzenia raportu to: {dzisiejsza_data}.\n"
                             "Oto surowe dane wyciągnięte ze wszystkich wgranych niemieckich odpraw celnych i dokumentów:\n"
                             f"{' '.join(all_extracted_rows)}\n\n"
-                            "BEZWZGLĘDNE ZASADY MATEMATYCZNE I WYKONAWCZE:\n"
-                            "1. **Zero domysłów i brak zerowych wyników**: Zsumuj precyzyjnie masy netto (Netto-Masse / Eigenmasse) ze wszystkich dokumentów. Pod żadnym pozorem nie zwracaj zerowych wartości ani kodu LaTeX.\n"
-                            "2. **Jawne liczby i wyliczenia**: Podaj ostateczną masę w kilogramach oraz tonach (z dokładnością do dwóch miejsc po przecinku) oraz realnie wyliczony koszt finansowy w EUR w oparciu o ceny EU ETS.\n"
+                            "BEZWZGLĘDNE ZASADY:\n"
+                            "1. Zsumuj masy netto ze wszystkich dokumentów. Pod żadnym pozorem nie zwracaj zerowych wartości ani wzorów LaTeX.\n"
+                            "2. Podaj ostateczną masę w kilogramach oraz tonach (z dokładnością do dwóch miejsc po przecinku) oraz realnie wyliczony koszt finansowy w EUR w oparciu o ceny EU ETS.\n"
                             f"3. W nagłówku raportu wpisz bezwzględnie dzisiejszą datę: {dzisiejsza_data}.\n"
-                            "4. **Stwórz szczegółową tabelę wyszczególniającą wyłącznie pozycje towarowe objęte CBAM** (kolumny: [Nazwa Towaru | Kod TARIC/CN | Dokładna Masa Netto (kg) | Kategoria CBAM]).\n"
+                            "4. Stwórz szczegółową tabelę wyszczególniającą wyłącznie pozycje towarowe objęte CBAM (kolumny: [Nazwa Towaru | Kod TARIC/CN | Dokładna Masa Netto (kg) | Kategoria CBAM]).\n"
                             "5. Podsumuj łączną masę towarów CBAM w kilogramach oraz tonach i jednoznacznie odpowiedz, czy przekroczono próg zwolnienia de minimis wynoszący 50 ton rocznie (TAK / NIE).\n"
                             "6. Przygotuj profesjonalny, czytelny raport w formacie Markdown."
                         )
@@ -873,10 +873,10 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                         status_text.empty()
                         progress_bar.empty()
                         st.success("✅ Pomyślnie przetworzono odprawy celne równolegle i wygenerowano rzetelny raport CBAM!")
-                        st.rerun()
                     except Exception as e:
                         st.error(f"Błąd podczas audytu: {str(e)}")
 
+        # JAWNE WYŚWIETLENIE WYNIKU NA EKRANIE BEZPOŚREDNIO POD PRZYCISKIEM
         if "cbam_indep_result" in st.session_state and st.session_state.cbam_indep_result:
             st.markdown("---")
             st.markdown(f"### 📋 Wynik Niezależnego Audytu CBAM dla Firmy: {st.session_state.current_company}")
