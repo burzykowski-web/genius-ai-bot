@@ -46,8 +46,11 @@ class StoredFile:
         else: self.type = "unsupported"
 
     def getvalue(self):
-        with open(self.filepath, "rb") as f:
-            return f.read()
+        try:
+            with open(self.filepath, "rb") as f:
+                return f.read()
+        except Exception:
+            return b""
 
 def load_companies_and_containers():
     data_struct = {}
@@ -102,9 +105,12 @@ def save_uploaded_files(company_name, container_no, uploaded_files):
         os.makedirs(docs_dir)
     saved_docs = []
     for f in uploaded_files:
-        if f.name.lower().endswith(".zip"):
-            try:
-                with zipfile.ZipFile(BytesIO(f.getvalue())) as z:
+        try:
+            f_bytes = f.getvalue()
+            if not f_bytes:
+                continue
+            if f.name.lower().endswith(".zip"):
+                with zipfile.ZipFile(BytesIO(f_bytes)) as z:
                     for filename in z.namelist():
                         if filename.endswith('/') or '__MACOSX' in filename or filename.startswith('.'):
                             continue
@@ -117,15 +123,15 @@ def save_uploaded_files(company_name, container_no, uploaded_files):
                         sf = StoredFile(fpath, base_name)
                         if sf.type != "unsupported":
                             saved_docs.append(sf)
-            except Exception as e:
-                st.error(f"Błąd rozpakowywania archiwum ZIP {f.name}: {str(e)}")
-        else:
-            fpath = os.path.join(docs_dir, f.name)
-            with open(fpath, "wb") as out:
-                out.write(f.getvalue())
-            sf = StoredFile(fpath, f.name)
-            if sf.type != "unsupported":
-                saved_docs.append(sf)
+            else:
+                fpath = os.path.join(docs_dir, f.name)
+                with open(fpath, "wb") as out:
+                    out.write(f_bytes)
+                sf = StoredFile(fpath, f.name)
+                if sf.type != "unsupported":
+                    saved_docs.append(sf)
+        except Exception as e:
+            st.error(f"Błąd zapisu pliku {f.name}: {str(e)}")
     return saved_docs
 
 def delete_container_dir(company_name, container_no):
@@ -162,8 +168,8 @@ def load_hs_database():
                 data = json.load(f)
                 if isinstance(data, dict):
                     return data
-        except Exception as e:
-            st.sidebar.error(f"Błąd odczytu bazy HS: {str(e)}")
+        except Exception:
+            pass
     return {}
 
 def save_hs_database(db):
@@ -175,10 +181,15 @@ def update_hs_database_from_records(records, image_file=None):
     updated_count = 0
     img_name = ""
     if image_file:
-        img_name = f"prod_{int(time.time())}_{image_file.name}"
-        img_path = os.path.join(IMG_DB_DIR, img_name)
-        with open(img_path, "wb") as out:
-            out.write(image_file.getvalue())
+        try:
+            img_bytes = image_file.getvalue()
+            if img_bytes:
+                img_name = f"prod_{int(time.time())}_{image_file.name}"
+                img_path = os.path.join(IMG_DB_DIR, img_name)
+                with open(img_path, "wb") as out:
+                    out.write(img_bytes)
+        except Exception:
+            pass
 
     for r in records:
         prod_name = str(r.get("Nazwa Produktu", "")).strip()
@@ -724,9 +735,11 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
         if uploaded_cbam_indep:
             saved_indep = []
             for f in uploaded_cbam_indep:
-                if f.name.lower().endswith(".zip"):
-                    try:
-                        with zipfile.ZipFile(BytesIO(f.getvalue())) as z:
+                try:
+                    f_bytes = f.getvalue()
+                    if not f_bytes: continue
+                    if f.name.lower().endswith(".zip"):
+                        with zipfile.ZipFile(BytesIO(f_bytes)) as z:
                             for filename in z.namelist():
                                 if filename.endswith('/') or '__MACOSX' in filename or filename.startswith('.'):
                                     continue
@@ -740,10 +753,10 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                                     def getvalue(self):
                                         return self._data
                                 saved_indep.append(ZipWrapper(base_name, file_data))
-                    except Exception as e:
-                        st.error(f"Błąd rozpakowywania ZIP: {str(e)}")
-                else:
-                    saved_indep.append(f)
+                    else:
+                        saved_indep.append(f)
+                except Exception as e:
+                    st.error(f"Błąd pliku {f.name}: {str(e)}")
             st.session_state.cbam_independent_docs = saved_indep
             st.success(f"✅ Wgrano i załączono {len(saved_indep)} niezależnych plików do analizy CBAM dla firmy {st.session_state.current_company}.")
 
@@ -775,7 +788,10 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                                 excel_text = process_excel_all_sheets(f_bytes)
                                 contents.append(f"\n--- ZAWARTOŚĆ PLIKU EXCEL ({f.name} - wszystkie zakładki) ---\n" + excel_text + "\n")
                             elif ext == "pdf":
-                                contents.append(types.Part.from_bytes(data=f_bytes, mime_type="application/pdf"))
+                                try:
+                                    contents.append(types.Part.from_bytes(data=f_bytes, mime_type="application/pdf"))
+                                except Exception:
+                                    pass
                             elif ext in ["jpg", "jpeg"]:
                                 contents.append(types.Part.from_bytes(data=f_bytes, mime_type="image/jpeg"))
                             elif ext == "png":
@@ -870,32 +886,35 @@ elif app_mode == "🗄️ Wizualna Baza Kodów HS":
                                 "Wyciągnij każdą pozycję i zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) w pierwszej linii bez dodatkowego markdown:\n"
                                 "Nazwa_Produktu;Sklad_Materialowy;Kod_TARIC;Opis_CN;Tlumaczenie"
                             )
-                            contents = [prompt_pdf_import, types.Part.from_bytes(data=f_bytes, mime_type="application/pdf")]
-                            with st.spinner(f"Odczytywanie pliku PDF: {imp_f.name}..."):
-                                res_pdf = safe_generate_content(client, selected_model, contents)
-                                clean_csv_pdf = res_pdf.text.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
-                                for line in clean_csv_pdf.split('\n'):
-                                    if "Nazwa_Produktu" in line or line.count(';') < 2:
-                                        continue
-                                    parts = line.split(';')
-                                    if len(parts) >= 3:
-                                        p_name = parts[0].strip()
-                                        mat = parts[1].strip()
-                                        taric = parts[2].strip()
-                                        cn_desc = parts[3].strip() if len(parts) > 3 else ""
-                                        opt_trans = parts[4].strip() if len(parts) > 4 else ""
-                                        
-                                        if p_name and taric and taric != "nan":
-                                            key = f"{p_name}_{mat}_{taric}".lower()
-                                            db_current[key] = {
-                                                "product_name": p_name,
-                                                "material": mat,
-                                                "taric": taric,
-                                                "cn_description": cn_desc,
-                                                "optional_translation": opt_trans,
-                                                "image": ""
-                                            }
-                                            total_imported += 1
+                            try:
+                                contents = [prompt_pdf_import, types.Part.from_bytes(data=f_bytes, mime_type="application/pdf")]
+                                with st.spinner(f"Odczytywanie pliku PDF: {imp_f.name}..."):
+                                    res_pdf = safe_generate_content(client, selected_model, contents)
+                                    clean_csv_pdf = res_pdf.text.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
+                                    for line in clean_csv_pdf.split('\n'):
+                                        if "Nazwa_Produktu" in line or line.count(';') < 2:
+                                            continue
+                                        parts = line.split(';')
+                                        if len(parts) >= 3:
+                                            p_name = parts[0].strip()
+                                            mat = parts[1].strip()
+                                            taric = parts[2].strip()
+                                            cn_desc = parts[3].strip() if len(parts) > 3 else ""
+                                            opt_trans = parts[4].strip() if len(parts) > 4 else ""
+                                            
+                                            if p_name and taric and taric != "nan":
+                                                key = f"{p_name}_{mat}_{taric}".lower()
+                                                db_current[key] = {
+                                                    "product_name": p_name,
+                                                    "material": mat,
+                                                    "taric": taric,
+                                                    "cn_description": cn_desc,
+                                                    "optional_translation": opt_trans,
+                                                    "image": ""
+                                                }
+                                                total_imported += 1
+                            except Exception:
+                                pass
                                             
                     save_hs_database(db_current)
                     st.success(f"✅ Pomyślnie zaimportowano i zaktualizowano **{total_imported}** wzorców z plików do bazy!")
@@ -979,8 +998,10 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
             try:
                 processed_intra_docs = []
                 for f in uploaded_intra_docs:
+                    f_bytes = f.getvalue()
+                    if not f_bytes: continue
                     if f.name.lower().endswith(".zip"):
-                        with zipfile.ZipFile(BytesIO(f.getvalue())) as z:
+                        with zipfile.ZipFile(BytesIO(f_bytes)) as z:
                             for filename in z.namelist():
                                 if filename.endswith('/') or '__MACOSX' in filename or filename.startswith('.'):
                                     continue
@@ -1014,7 +1035,10 @@ elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
                         excel_text = process_excel_all_sheets(f_bytes)
                         contents.append(f"\n--- ZAWARTOŚĆ PLIKU EXCEL ({f.name} - wszystkie zakładki) ---\n" + excel_text + "\n")
                     elif ext == "pdf":
-                        contents.append(types.Part.from_bytes(data=f_bytes, mime_type="application/pdf"))
+                        try:
+                            contents.append(types.Part.from_bytes(data=f_bytes, mime_type="application/pdf"))
+                        except Exception:
+                            pass
                     elif ext in ["jpg", "jpeg"]:
                         contents.append(types.Part.from_bytes(data=f_bytes, mime_type="image/jpeg"))
                     elif ext == "png":
@@ -1118,13 +1142,18 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                 client = genai.Client(api_key=api_key)
                 contents = [prompt]
                 for f in proj["docs"]:
+                    f_bytes = f.getvalue()
+                    if not f_bytes: continue
                     if f.type == "spreadsheet":
-                        excel_text = process_excel_all_sheets(f.getvalue())
+                        excel_text = process_excel_all_sheets(f_bytes)
                         contents.append(f"\n--- ZAWARTOŚĆ PLIKU EXCEL ({f.name} - wszystkie zakładki) ---\n" + excel_text + "\n")
                     elif f.type == "application/pdf":
-                        contents.append(types.Part.from_bytes(data=f.getvalue(), mime_type="application/pdf"))
+                        try:
+                            contents.append(types.Part.from_bytes(data=f_bytes, mime_type="application/pdf"))
+                        except Exception:
+                            pass
                     elif f.type in ["image/jpeg", "application/png"]:
-                        contents.append(types.Part.from_bytes(data=f.getvalue(), mime_type=f.type))
+                        contents.append(types.Part.from_bytes(data=f_bytes, mime_type=f.type))
                 with st.spinner(msg):
                     res = safe_generate_content(client, selected_model, contents)
                     return res.text
