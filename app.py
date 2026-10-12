@@ -23,7 +23,58 @@ try:
 except ImportError:
     FPDF_AVAILABLE = False
 
-st.set_page_config(page_title="Genius AI BOT | Huzar Intrastat & CBAM", page_icon="🚢", layout="wide")
+st.set_page_config(page_title="Genius AI BOT | Enterprise Logistics Platform", page_icon="🚢", layout="wide")
+
+# --- NOWOCZESNY DESIGN CSS (ENTERPRISE DASHBOARD) ---
+st.markdown("""
+<style>
+    /* Globalne tło i czcionka */
+    .stApp {
+        background-color: #f8fafc;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    
+    /* Ukrycie standardowej stopki Streamlit */
+    footer {visibility: hidden;}
+    
+    /* Panel boczny */
+    section[data-testid="stSidebar"] {
+        background-color: #ffffff;
+        border-right: 1px solid #e2e8f0;
+    }
+    
+    /* Karty i pojemniki (Kafle KPI) */
+    .metric-card {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 16px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        text-align: center;
+    }
+    
+    /* Przyciski główne */
+    .stButton>button {
+        border-radius: 8px;
+        font-weight: 600;
+        transition: all 0.2s ease;
+    }
+    
+    /* Tabele i edytory */
+    div[data-testid="stDataFrame"], div[data-testid="stDataEditor"] {
+        border-radius: 8px;
+        overflow: hidden;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+    }
+    
+    /* Nagłówki sekcji */
+    h1, h2, h3 {
+        color: #1e293b;
+        font-weight: 700;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 DATA_DIR = "projects_data"
 DB_FILE = os.path.join(DATA_DIR, "hs_database_v3.json")
@@ -360,7 +411,7 @@ class CustomPDF(FPDF):
         self.cell(0, 8, 'RAPORT KONTROLI FORMALNEJ I AUDYTU CELNEGO', ln=1)
         self.set_font('Helvetica', 'B', 9)
         self.set_text_color(74, 85, 104)
-        self.cell(0, 5, 'Genius AI BOT | Genius Logistics Sp. z o.o.', ln=1)
+        self.cell(0, 5, 'Genius AI BOT | Enterprise Logistics Platform', ln=1)
         self.set_draw_color(43, 108, 176)
         self.set_line_width(0.6)
         self.line(10, 24, 200, 24)
@@ -508,7 +559,7 @@ if "current_container" not in st.session_state:
 DEFAULT_KEY = "AQ.Ab8RN6LNsWIfhgnWWSVYIZEM2O_MG3HL2o9hFVmjexwfw8RMdg"
 
 st.sidebar.markdown("### 🚢 Genius AI BOT")
-st.sidebar.markdown("Enterprise Logistics Platform")
+st.sidebar.markdown("*Enterprise Logistics Platform*")
 api_key = st.sidebar.text_input("Klucz API Gemini", value=DEFAULT_KEY, type="password")
 selected_model = st.sidebar.selectbox("Model API", ["gemini-3.6-flash"])
 
@@ -1152,11 +1203,11 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                     total_amt = grouped["Amount (EUR)"].sum()
 
                     col_kpi1, col_kpi2, col_kpi3, col_kpi4, col_kpi5 = st.columns(5)
-                    with col_kpi1: st.metric("Kartony", f"{total_ctns:,.0f}")
-                    with col_kpi2: st.metric("Sztuki", f"{total_qty:,.0f}")
-                    with col_kpi3: st.metric("Masa Netto", f"{total_nw:,.1f} kg")
-                    with col_kpi4: st.metric("Masa Brutto", f"{total_gw:,.1f} kg")
-                    with col_kpi5: st.metric("Wartość", f"{total_amt:,.2f}")
+                    with col_kpi1: st.metric("📦 Kartony", f"{total_ctns:,.0f}")
+                    with col_kpi2: st.metric("🔢 Sztuki", f"{total_qty:,.0f}")
+                    with col_kpi3: st.metric("⚖️ Masa Netto", f"{total_nw:,.1f} kg")
+                    with col_kpi4: st.metric("⚖️ Masa Brutto", f"{total_gw:,.1f} kg")
+                    with col_kpi5: st.metric("💶 Wartość", f"{total_amt:,.2f}")
 
                     st.dataframe(grouped, use_container_width=True, hide_index=True)
                     
