@@ -841,7 +841,6 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                             return None
 
                         completed_count = 0
-                        # Przetwarzanie paczkami po 5 plików, aby nie przeciążyć API i uniknąć błędu 429 / 503
                         for i in range(0, total_files, batch_size):
                             batch = docs_list[i:i + batch_size]
                             status_text.text(f"Przetwarzanie paczki plików {i+1} do {min(i+batch_size, total_files)} z {total_files}...")
@@ -854,21 +853,21 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                                     res_text = future.result()
                                     if res_text:
                                         all_extracted_rows.append(res_text)
-                            time.sleep(1) # Oddech dla API między paczkami
+                            time.sleep(1)
 
                         dzisiejsza_data = datetime.now().strftime("%d.%m.%Y")
-                        status_text.text("Generowanie ostatecznego raportu końcowego CBAM...")
+                        status_text.text("Generowanie ostatecznego raportu z precyzyjnym scaleniem wag ze wszystkich plików...")
                         
                         summary_prompt = (
                             f"Jesteś głównym biegłym ds. celnych i CBAM dla firmy: {st.session_state.current_company}.\n"
                             f"Oficjalna data sporządzenia raportu to: {dzisiejsza_data}.\n"
-                            "Oto surowe dane wyciągnięte ze wszystkich wgranych dokumentów PDF i odpraw celnych:\n"
+                            f"Oto surowe dane wyciągnięte ze WSZYSTKICH {total_files} wgranych dokumentów PDF i odpraw celnych ATLAS:\n"
                             f"{' '.join(all_extracted_rows)}\n\n"
-                            "BEZWZGLĘDNE ZASADY:\n"
-                            "1. Zsumuj masy netto ze wszystkich dokumentów. Pod żadnym pozorem nie zwracaj zerowych wartości.\n"
+                            "BEZWZGLĘDNE ZASADY KONTROLI I SUMOWANIA:\n"
+                            "1. Masz bezwzględny obowiązek zagregować masy netto ze WSZYSTKICH przesłanych plików. Przeanalizuj surowe dane i zweryfikuj sumy. Nie wolno pomijać żadnej odprawy ani żadnej pozycji!\n"
                             "2. Podaj ostateczną masę w kilogramach oraz tonach (z dokładnością do dwóch miejsc po przecinku) oraz realnie wyliczony koszt finansowy w EUR w oparciu o ceny EU ETS.\n"
                             f"3. W nagłówku raportu wpisz bezwzględnie dzisiejszą datę: {dzisiejsza_data}.\n"
-                            "4. Stwórz szczegółową tabelę wyszczególniającą wyłącznie pozycje towarowe objęte CBAM (kolumny: [Nazwa Towaru | Kod TARIC/CN | Dokładna Masa Netto (kg) | Kategoria CBAM]).\n"
+                            "4. Stwórz szczegółową, pełną tabelę wyszczególniającą pozycje towarowe objęte CBAM ze wszystkich dokumentów.\n"
                             "5. Podsumuj łączną masę towarów CBAM w kilogramach oraz tonach i jednoznacznie odpowiedz, czy przekroczono próg zwolnienia de minimis wynoszący 50 ton rocznie (TAK / NIE).\n"
                             "6. Przygotuj profesjonalny, czytelny raport w formacie Markdown."
                         )
@@ -878,7 +877,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                         
                         status_text.empty()
                         progress_bar.empty()
-                        st.success("✅ Pomyślnie przetworzono pliki PDF w paczkach i wygenerowano rzetelny raport CBAM!")
+                        st.success("✅ Pomyślnie scalono dane ze wszystkich plików i wygenerowano rzetelny, pełny raport CBAM!")
                     except Exception as e:
                         st.error(f"Błąd podczas audytu: {str(e)}")
 
