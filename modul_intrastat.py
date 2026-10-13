@@ -3,60 +3,68 @@
 Moduł 2: Dedykowany Generator INTRASTAT (Huzar)
 """
 import pandas as pd
-import re
 import xml.etree.ElementTree as ET
+from xml.dom import minidom
+from io import StringIO
 
-def process_intrastat_module(file_path_or_buffer, filename="", direction="WPR"):
-    """
-    Generuje deklarację Intrastat (W przywozie / P wywozie) zgodną ze specyfikacją Huzar WinSAD.
-    """
+def process_intrastat_dataframe(text_data):
+    clean_csv = text_data.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
+    valid_lines = [line for line in clean_csv.split('\n') if line.count(';') >= 5 or "Nr_Faktury" in line or "Faktura" in line]
+    if not valid_lines:
+        return pd.DataFrame(columns=["Kontrahent", "NumerDokumentu", "DataWystawienia", "NIP", "Wartosc", "Waluta"])
     try:
-        xl = pd.ExcelFile(file_path_or_buffer)
-        df = xl.parse(xl.sheet_names[0])
-    except Exception as e:
-        return {
-            "status": "ERROR",
-            "message": f"Błąd odczytu pliku dla Intrastat: {str(e)}"
-        }
+        df = pd.read_csv(StringIO("\n".join(valid_lines)), sep=";", on_bad_lines='skip')
+        for col in ["Ilosc_Sztuk", "Masa_Netto_KG", "Wartosc_PLN"]:
+            if col in df.columns:
+                df[col] = df[col].astype(str).str.replace(",", ".").str.extract(r"(\d+\.?\d*)")[0].astype(float).fillna(0)
+        
+        if "Nr_Faktury" in df.columns:
+            df["Nr_Faktury"] = df["Nr_Faktury"].astype(str).str.strip()
+        if "Kod_CN" in df.columns:
+            df["Kod_CN"] = df["Kod_CN"].astype(str).str.replace(r"\D", "", regex=True).str[:8]
 
-    df.columns = [str(c).strip() for c in df.columns]
-
-    # Mapowanie kolumn Intrastat
-    hs_col = next((col for col in df.columns if 'hs' in col.lower() or 'taric' in col.lower() or 'kod' in col.lower()), df.columns[0])
-    weight_col = next((col for col in df.columns if 'n.w' in col.lower() or 'masa' in col.lower() or 'net' in col.lower()), None)
-    value_col = next((col for col in df.columns if 'eur' in col.lower() or 'cif' in col.lower() or 'wartość' in col.lower()), None)
-
-    intrastat_items = []
-    for _, row in df.iterrows():
-        code = re.sub(r'\D', '', str(row[hs_col]))
-        if len(code) >= 8:
-            net_w = float(pd.to_numeric(row[weight_col], errors='coerce')) if weight_col else 0.0
-            val_eur = float(pd.to_numeric(row[value_col], errors='coerce')) if value_col else 0.0
-
-            intrastat_items.append({
-                "kod_cn": code[:8],
-                "masa_netto": round(net_w, 2),
-                "wartosc_faktur_eur": round(val_eur, 2)
+        mapped_data = []
+        for _, r in df.iterrows():
+            mapped_data.append({
+                "Kontrahent": str(r.get("Sprzedawca_Nazwa", r.get("Kontrahent", ""))),
+                "NumerDokumentu": str(r.get("Nr_Faktury", r.get("NumerDokumentu", ""))),
+                "DataWystawienia": str(r.get("Data_Faktury", r.get("DataWystawienia", ""))),
+                "NIP": str(r.get("Sprzedawca_NIP", r.get("NIP", ""))),
+                "Wartosc": float(r.get("Wartosc_PLN", r.get("Wartosc", 0))),
+                "Waluta": "PLN",
+                "Kod_CN": str(r.get("Kod_CN", "")),
+                "Opis_Towaru": str(r.get("Opis_Towaru", "")),
+                "Ilosc_Sztuk": float(r.get("Ilosc_Sztuk", 0)),
+                "Masa_Netto_KG": float(r.get("Masa_Netto_KG", 0))
             })
+        
+        df_final = pd.DataFrame(mapped_data)
+        if "NumerDokumentu" in df_final.columns:
+            df_final = df_final.groupby(["NumerDokumentu"], as_index=False).agg({
+                "Kontrahent": "first",
+                "DataWystawienia": "first",
+                "NIP": "first",
+                "Wartosc": "sum",
+                "Waluta": "first",
+                "Kod_CN": lambda x: ", ".join(sorted(set(str(v) for v in x if pd.notna(v) and str(v).strip() != ''))),
+                "Opis_Towaru": lambda x: " | ".join(sorted(set(str(v) for v in x if pd.notna(v) and str(v).strip() != ''))),
+                "Ilosc_Sztuk": "sum",
+                "Masa_Netto_KG": "sum"
+            })
+        return df_final
+    except Exception:
+        return pd.DataFrame()
 
-    # Generowanie struktury XML zgodnej z Huzar WinSAD
-    root = ET.Element("KomunikatIntrastat")
-    naglowek = ET.SubElement(root, "Naglowek")
-    ET.SubElement(naglowek, "Kierunek").text = direction # WPR lub PWO
-    
-    pozycje = ET.SubElement(root, "Pozycje")
-    for idx, item in enumerate(intrastat_items, 1):
-        poz = ET.SubElement(pozycje, "Pozycja", numer=str(idx))
-        ET.SubElement(poz, "KodCN").text = item["kod_cn"]
-        ET.SubElement(poz, "MasaNettoKG").text = str(item["masa_netto"])
-        ET.SubElement(poz, "WartoscFakturEUR").text = str(item["wartosc_faktur_eur"])
-
-    xml_string = ET.tostring(root, encoding="utf-8", xml_declaration=True).decode("utf-8")
-
-    return {
-        "status": "OK",
-        "module": "Generator INTRASTAT (Huzar)",
-        "total_items": len(intrastat_items),
-        "xml_output": xml_string,
-        "message": "Wygenerowano plik XML Intrastat gotowy do importu do Huzar WinSAD."
-    }
+def generate_huzarfaktury_xml(df):
+    root = ET.Element("TFakturyHS")
+    for _, row in df.iterrows():
+        faktura = ET.SubElement(root, "Faktura")
+        rodzaj_elem = ET.SubElement(faktura, "RodzajDokumentu")
+        rodzaj_elem.text = "WDT"
+        for col in df.columns:
+            val = str(row[col]) if pd.notna(row[col]) else ""
+            child = ET.SubElement(faktura, col)
+            child.text = val
+    rough_string = ET.tostring(root, 'utf-8')
+    reparsed = minidom.parseString(rough_string)
+    return reparsed.toprettyxml(indent="  ", encoding="utf-8")
