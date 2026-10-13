@@ -177,7 +177,6 @@ def translate_text_google(text):
         return text
 
 def process_excel_all_sheets_to_csv_rows(f_bytes, filename="plik.xls"):
-    """Bezpieczne odczytywanie wszystkich zakładek dużego Excela i konwersja na wiersze tekstowe."""
     try:
         ext = filename.split(".")[-1].lower()
         if ext == "xls":
@@ -191,7 +190,6 @@ def process_excel_all_sheets_to_csv_rows(f_bytes, filename="plik.xls"):
         all_rows = []
         for sheet_name in xl.sheet_names:
             df_sheet = xl.parse(sheet_name)
-            # Czyszczenie pustych wierszy
             df_sheet = df_sheet.dropna(how='all')
             for _, row in df_sheet.iterrows():
                 row_str = " | ".join([str(val) for val in row.values if pd.notna(val) and str(val).strip() != ""])
@@ -202,8 +200,7 @@ def process_excel_all_sheets_to_csv_rows(f_bytes, filename="plik.xls"):
         return [f"[Błąd odczytu Excela: {str(e)}]"]
 
 def call_ai_chunked_stage2_massive(client, model_name, base_prompt, rows_list):
-    """Inteligentne paczkowanie 2000+ wierszy dla Etapu 2."""
-    chunk_size = 100  # 100 wierszy na jedną paczkę AI, co gwarantuje pełną precyzję
+    chunk_size = 100
     chunks = [rows_list[i:i + chunk_size] for i in range(0, len(rows_list), chunk_size)]
     
     combined_csv_rows = []
@@ -214,7 +211,7 @@ def call_ai_chunked_stage2_massive(client, model_name, base_prompt, rows_list):
         chunk_text = "\n".join(chunk)
         chunk_prompt = (
             f"{base_prompt}\n"
-            f"(To jest paczka {idx+1} z {len(chunks)} dla dużego pliku. Przetwórz te wiersze i zwróć wyłącznie format CSV ze średnikami bez nagłówka)."
+            f"(Paczka {idx+1} z {len(chunks)}. Przetwórz te wiersze i zwróć wyłącznie format CSV ze średnikami bez nagłówka)."
         )
         try:
             res = safe_generate_content(client, model_name, [chunk_prompt, chunk_text])
@@ -508,13 +505,13 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                             p2 = (
                                 "Jesteś precyzyjnym systemem OCR i celnym.\n"
                                 "Przeanalizuj poniższe wiersze z pliku Excel.\n"
-                                "Wyciągnij KAŻDĄ pozycję towarową, starannie rozdzielając Nazwę Produktu od Składu Materiałowego (np. papier, poliester, metal, drewno itp.) oraz wyciągnij Numer Katalogowy (SKU / Artikel-Nr).\n"
-                                "Zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) bez nagłówka w pierwszej linii:\n"
+                                "Wyciągnij KAŻDĄ pozycję towarową, starannie rozdzielając Nazwę Produktu od Składu Materiałowego oraz Numer Katalogowy (SKU / Artikel-Nr).\n"
+                                "Zwróć wynik jako czysty kod CSV ze średnikami (;) bez nagłówka w pierwszej linii:\n"
                                 "POS;Catalog_No;Product_Name;Material;HS_CODE;CTNS;Quantity;NW_KGS;GW_KGS;Amount;Waluta"
                             )
                             
                             res_massive = call_ai_chunked_stage2_massive(client_obj, selected_model, p2, all_excel_rows)
-                            proj["out2"] = "POS;Catalog_No;Product_Name;Material;HS_CODE;CTNS;Quantity;NW_KGS;GW_KGS;Amount;Waluta\n" + res_massive
+                            proj["out2"] = res_massive
                             save_container_data(cur_comp, cur_no, proj)
                             st.success(f"✅ Masowe zbijanie 2000+ pozycji zakończone pomyślnie!")
                             st.rerun()
@@ -524,24 +521,27 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
             if proj.get("out2"):
                 try:
                     grouped = process_stage_2_dataframe(proj["out2"])
-                    col1, col2, col3, col4, col5 = st.columns(5)
-                    col1.metric("Kartony", f"{grouped['CTNS'].sum():,.0f}")
-                    col2.metric("Sztuki", f"{grouped['Quantity (pcs.)'].sum():,.0f}")
-                    col3.metric("Masa Netto", f"{grouped['N.W KGS'].sum():,.1f} kg")
-                    col4.metric("Masa Brutto", f"{grouped['G.W KGS'].sum():,.1f} kg")
-                    col5.metric("Wartość", f"{grouped['Amount (EUR)'].sum():,.2f}")
+                    if not grouped.empty:
+                        col1, col2, col3, col4, col5 = st.columns(5)
+                        col1.metric("Kartony", f"{grouped['CTNS'].sum():,.0f}")
+                        col2.metric("Sztuki", f"{grouped['Quantity (pcs.)'].sum():,.0f}")
+                        col3.metric("Masa Netto", f"{grouped['N.W KGS'].sum():,.1f} kg")
+                        col4.metric("Masa Brutto", f"{grouped['G.W KGS'].sum():,.1f} kg")
+                        col5.metric("Wartość", f"{grouped['Amount (EUR)'].sum():,.2f}")
 
-                    st.markdown(f"**Liczba zsumowanych wierszy/pozycji po agregacji:** `{len(grouped)}`")
-                    st.dataframe(grouped, use_container_width=True, hide_index=True)
-                    
-                    df_excel = grouped.copy()
-                    for col in ["N.W KGS", "G.W KGS", "Amount (EUR)"]:
-                        if col in df_excel.columns:
-                            df_excel[col] = df_excel[col].apply(lambda x: f"{x:.2f}".replace(".", ","))
-                    output = BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        df_excel.to_excel(writer, index=False, sheet_name='Zbicie Pozycji')
-                    st.download_button("📊 Pobierz zweryfikowany plik Excel (.xlsx)", data=output.getvalue(), file_name=f"Genius_AI_Zbicie_{cur_comp}_{cur_no}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                        st.markdown(f"**Liczba zsumowanych wierszy/pozycji po agregacji:** `{len(grouped)}`")
+                        st.dataframe(grouped, use_container_width=True, hide_index=True)
+                        
+                        df_excel = grouped.copy()
+                        for col in ["N.W KGS", "G.W KGS", "Amount (EUR)"]:
+                            if col in df_excel.columns:
+                                df_excel[col] = df_excel[col].apply(lambda x: f"{x:.2f}".replace(".", ","))
+                        output = BytesIO()
+                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                            df_excel.to_excel(writer, index=False, sheet_name='Zbicie Pozycji')
+                        st.download_button("📊 Pobierz zweryfikowany plik Excel (.xlsx)", data=output.getvalue(), file_name=f"Genius_AI_Zbicie_{cur_comp}_{cur_no}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                    else:
+                        st.warning("⚠️ Otrzymano puste dane z analizy pliku Excel.")
                 except Exception as e:
                     st.error(f"Błąd wyświetlania tabeli: {str(e)}")
 
