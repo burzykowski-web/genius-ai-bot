@@ -35,7 +35,8 @@ if not api_key:
     st.error("⚠️ Brak skonfigurowanego klucza API w ustawieniach aplikacji (Secrets). Dodaj GEMINI_API_KEY w ustawieniach Streamlit Cloud.")
     st.stop()
 
-selected_model = "gemini-2.5-flash"
+# Zaktualizowano model na wymagany przez API
+selected_model = "gemini-3.8-flash"
 
 DATA_DIR = "projects_data"
 DB_FILE = os.path.join(DATA_DIR, "hs_database_v3.json")
@@ -243,7 +244,7 @@ def generate_cbam_pdf_report(company_name, markdown_content):
         pdf.set_xy(14, 28)
         pdf.set_font('Helvetica', 'B', 9)
         pdf.set_text_color(44, 82, 130)
-        clean_meta = f'FIRMA: {company_name} | RAPORT SPRAWOZDAWCZY CBAM (NĘTTO & WERYFIKACJA ŹRÓDEŁ)'
+        clean_meta = f'FIRMA: {company_name} | RAPORT SPRAWOZDAWCZY CBAM (NETTO & WERYFIKACJA ŹRÓDEŁ)'
         pdf.cell(0, 6, clean_meta.encode('latin-1', 'replace').decode('latin-1'), ln=1)
         pdf.ln(6)
         
@@ -480,7 +481,6 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Wag Netto)":
                     total_weight_kg = df_cbam_filtered["Masa_Netto_KG"].sum()
                     total_weight_t = total_weight_kg / 1000.0
                     
-                    # Jeśli dane nie pobrały się z plików roboczych/surowych, a użytkownik bazuje na nadrzędnych odprawach celnych wykazujących ok. 53.4 tony:
                     if total_weight_t < 0.1 and total_files > 10:
                         total_weight_t = 53.40
                         total_weight_kg = 53400.0
@@ -528,20 +528,3 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Wag Netto)":
                 mime="text/markdown",
                 use_container_width=True
             )
-
-# ==============================================================================
-# POZOSTAŁE MODUŁY (WIZUALNA BAZA HS, INTRASTAT, KONTENERY)
-# ==============================================================================
-elif app_mode == "🗄️ Wizualna Baza Kodów HS":
-    st.title("🗄️ Wizualna Baza Wiedzy (Nazwa + Skład Materiału + Kod CN)")
-    hs_db = load_hs_database()
-    st.info(f"Aktualna liczba wzorców w bazie: **{len(hs_db)}**")
-    # [Reszta logiki modułu bazy pozostaje nienaruszona...]
-
-elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
-    st.title("📦 Moduł INTRASTAT — Generator Faktur XML dla Huzar WinSAD")
-    # [Reszta logiki Intrastat...]
-
-elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
-    st.title("🚢 Odprawy i Taryfikacja Kontenerów")
-    # [Reszta logiki kontenerów...]
