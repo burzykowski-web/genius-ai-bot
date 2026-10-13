@@ -4,7 +4,6 @@ import re
 from io import StringIO
 
 def clean_numeric_value(val):
-    """Bezpiecznie konwertuje formaty liczbowe na float."""
     if pd.isna(val):
         return 0.0
     s = str(val).strip()
@@ -26,8 +25,9 @@ def clean_numeric_value(val):
         return 0.0
 
 def process_stage_2_dataframe(csv_text):
+    default_cols = ["pos", "Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE", "CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)", "Waluta"]
     if not csv_text or not isinstance(csv_text, str):
-        return pd.DataFrame(columns=["pos", "Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE", "CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)", "Waluta"])
+        return pd.DataFrame(columns=default_cols)
     
     clean_lines = []
     for line in csv_text.split('\n'):
@@ -42,7 +42,7 @@ def process_stage_2_dataframe(csv_text):
         
     final_csv_str = "\n".join(clean_lines)
     if not final_csv_str:
-        return pd.DataFrame(columns=["pos", "Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE", "CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)", "Waluta"])
+        return pd.DataFrame(columns=default_cols)
         
     try:
         df = pd.read_csv(StringIO(final_csv_str), sep=";", on_bad_lines='skip')
@@ -50,7 +50,7 @@ def process_stage_2_dataframe(csv_text):
         try:
             df = pd.read_csv(StringIO(final_csv_str), sep=",", on_bad_lines='skip')
         except Exception:
-            return pd.DataFrame()
+            return pd.DataFrame(columns=default_cols)
             
     col_map = {}
     for c in df.columns:
@@ -78,23 +78,20 @@ def process_stage_2_dataframe(csv_text):
             
     df = df.rename(columns=col_map)
     
-    req_cols = ["Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE", "CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"]
-    for rc in req_cols:
-        if rc not in df.columns:
+    for rc in default_cols:
+        if rc not in df.columns and rc != "pos":
             df[rc] = 0.0 if rc in ["CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"] else ""
             
     if "Waluta" not in df.columns:
         df["Waluta"] = "EUR"
         
-    # Konwersja kolumn numerycznych
     for col in ["CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"]:
-        df[col] = df[col].apply(clean_numeric_value)
+        if col in df.columns:
+            df[col] = df[col].apply(clean_numeric_value)
 
-    # Standaryzacja kluczy grupowania
     df["Nazwa Produktu"] = df["Nazwa Produktu"].fillna("").astype(str).str.strip().str.upper()
     df["Skład Materiałowy"] = df["Skład Materiałowy"].fillna("").astype(str).str.strip().str.upper()
 
-    # Agregacja i sumowanie po Nazwie oraz Składzie Materiałowym
     agg_dict = {
         "CTNS": "sum",
         "Quantity (pcs.)": "sum",
@@ -106,9 +103,15 @@ def process_stage_2_dataframe(csv_text):
         "Waluta": "first"
     }
 
-    df_grouped = df.groupby(["Nazwa Produktu", "Skład Materiałowy"], as_index=False).agg(agg_dict)
+    try:
+        df_grouped = df.groupby(["Nazwa Produktu", "Skład Materiałowy"], as_index=False).agg(agg_dict)
+    except Exception:
+        df_grouped = df.copy()
+
+    for rc in default_cols:
+        if rc not in df_grouped.columns and rc != "pos":
+            df_grouped[rc] = 0.0 if rc in ["CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"] else ""
     
-    # Porządkowanie kolumn zgodnie z oczekiwaniami app.py
     df_grouped = df_grouped[["Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE", "CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)", "Waluta"]]
     df_grouped.insert(0, "pos", range(1, len(df_grouped) + 1))
     
