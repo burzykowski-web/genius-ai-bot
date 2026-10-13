@@ -14,8 +14,8 @@ from google.genai import types
 # Importy modułów
 from modul_odprawy import generate_formal_pdf_report, process_stage_2_dataframe, parse_stage_3_csv
 from modul_intrastat import process_intrastat_dataframe, generate_huzarfaktury_xml
-from modul_baza_hs import load_hs_database, save_hs_database, update_hs_database_from_records
-from modul_cbam import generate_cbam_pdf_report
+from modul_baza_hs import load_hs_database, save_hs_database
+from modul_baza_hs import update_hs_database_from_records
 
 try:
     from deep_translator import GoogleTranslator
