@@ -690,7 +690,7 @@ st.sidebar.markdown("---")
 # ==============================================================================
 if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
     st.title("🇪🇺 Moduł CBAM — Unijny Mechanizm Dostosowywania Cen na Granicach")
-    st.caption("Obliczanie wag, deterministyczna weryfikacja progu 50 ton rocznie oraz audyt asortymentu CBAM.")
+    st.caption("Ekstrakcja wyłącznie wag netto z europejskich dokumentów i odpraw celnych (PDF/XLS) oraz twarde sumowanie matematyczne.")
 
     if not st.session_state.current_company:
         st.warning("⚠️ Najpierw dodaj i wybierz firmę w panelu bocznym!")
@@ -750,14 +750,14 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                         st.download_button("📄 Pobierz Raport CBAM (Etap 1) w formacie PDF", data=cbam_pdf_bytes, file_name=f"Raport_CBAM_Etap1_{cur_comp}_{selected_cbam_cont}.pdf", mime="application/pdf", use_container_width=True)
 
     else:
-        st.subheader("🔍 Etap 2: Błyskawiczny Audyt Równoległy i Deterministyczna Weryfikacja Progu 50 Ton CBAM")
-        st.info(f"Wgraj dokumenty PDF, arkusze Excel (.xls/.xlsx) lub niemieckie odprawy celne ATLAS dla aktywnej firmy: **{st.session_state.current_company}**. System ekstrakcji danych powiąże każdy plik, a masy zostaną zsumowane twardo w Pythonie.")
+        st.subheader("🔍 Etap 2: Deterministyczny Audyt Wag Netto z Dokumentów Europejskich i Odpraw ATLAS")
+        st.info(f"Wgraj niemieckie odprawy celne ATLAS, pliki PDF lub arkusze Excel dla firmy: **{st.session_state.current_company}**. System wyciągnie **WYŁĄCZNIE masy netto** i zsumuje je matematycznie w Pythonie.")
 
         if "cbam_independent_docs" not in st.session_state:
             st.session_state.cbam_independent_docs = []
 
         uploaded_cbam_indep = st.file_uploader(
-            "Wgraj pliki do niezależnej analizy CBAM (PDF / Excel / ZIP / Niemieckie Odprawy Celne ATLAS)",
+            "Wgraj pliki do niezależnej analizy CBAM (PDF / Excel / ZIP / Odprawy ATLAS)",
             type=["zip", "pdf", "xlsx", "xls", "png", "jpg", "jpeg"],
             accept_multiple_files=True,
             key="cbam_indep_files"
@@ -789,12 +789,12 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                 except Exception as e:
                     st.error(f"Błąd pliku {f.name}: {str(e)}")
             st.session_state.cbam_independent_docs = saved_indep
-            st.success(f"✅ Wgrano i załączono {len(saved_indep)} plików do analizy CBAM dla firmy {st.session_state.current_company}.")
+            st.success(f"✅ Wgrano i załączono {len(saved_indep)} plików dla firmy {st.session_state.current_company}.")
 
         if st.session_state.cbam_independent_docs:
             st.write(f"📂 **Załączone pliki ({len(st.session_state.cbam_independent_docs)} szt.):** " + ", ".join([d.name for d in st.session_state.cbam_independent_docs[:10]]) + ("..." if len(st.session_state.cbam_independent_docs) > 10 else ""))
 
-            if st.button("🚀 Uruchom Deterministyczny Audyt CBAM", type="primary", use_container_width=True):
+            if st.button("🚀 Uruchom Ekstrakcję i Deterministyczne Sumowanie Wag Netto", type="primary", use_container_width=True):
                 if not st.session_state.current_company:
                     st.error("Wybierz najpierw firmę w panelu bocznym.")
                 else:
@@ -804,7 +804,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                         
                         docs_list = st.session_state.cbam_independent_docs
                         total_files = len(docs_list)
-                        batch_size = 5
+                        batch_size = 3  # mniejsze paczki dla stabilności i uniknięcia błędów API
                         
                         progress_bar = st.progress(0)
                         status_text = st.empty()
@@ -815,14 +815,15 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                                 if not f_bytes: return []
                                 ext = f_item.name.split(".")[-1].lower()
                                 
-                                file_contents_prompt = (
-                                    f"Jesteś precyzyjnym audytorem celnym CBAM. Analizujesz dokument PDF / odprawę celną lub plik {f_item.name}.\n"
-                                    "Szukaj niemieckich określeń wagowych (np. Netto-Masse, Eigenmasse, Rohmasse, Zoll, Masa netto).\n"
-                                    "Zwróć WYŁĄCZNIE wiersze danych w formacie CSV ze średnikami (;) (bez nagłówka, bez formatowania markdown):\n"
+                                strict_net_weight_prompt = (
+                                    f"Jesteś ścisłym systemem parsowania dokumentów celnych dla pliku {f_item.name}.\n"
+                                    "SZUKAJ WYŁĄCZNIE WAG NETTO (np. Netto-Masse, Eigenmasse, Masa netto, NW).\n"
+                                    "Zignoruj masy brutto (Rohmasse, Gross weight) oraz ilości sztuk.\n"
+                                    "Zwróć WYŁĄCZNIE wiersze w formacie CSV ze średnikami (;) (bez nagłówka, bez markdown):\n"
                                     "Nazwa_Produktu;Kod_TARIC;Masa_Netto_KG;Czy_CBAM_TAK_NIE;Kategoria_CBAM"
                                 )
                                 
-                                doc_parts = [file_contents_prompt]
+                                doc_parts = [strict_net_weight_prompt]
                                 if ext in ["xlsx", "xls"]:
                                     excel_text = process_excel_all_sheets(f_bytes, f_item.name)
                                     doc_parts.append(excel_text)
@@ -848,9 +849,9 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                         completed_count = 0
                         for i in range(0, total_files, batch_size):
                             batch = docs_list[i:i + batch_size]
-                            status_text.text(f"Ekstrakcja danych: pliki {i+1} do {min(i+batch_size, total_files)} z {total_files}...")
+                            status_text.text(f"Ekstrakcja wag netto: pliki {i+1} do {min(i+batch_size, total_files)} z {total_files}...")
                             
-                            with ThreadPoolExecutor(max_workers=3) as executor:
+                            with ThreadPoolExecutor(max_workers=2) as executor:
                                 future_to_file = {executor.submit(process_single_file, f): f for f in batch}
                                 for future in as_completed(future_to_file):
                                     completed_count += 1
@@ -858,18 +859,16 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                                     res_lines = future.result()
                                     if res_lines:
                                         extracted_csv_lines.extend(res_lines)
-                            time.sleep(1)
+                            time.sleep(1.5)
 
-                        status_text.text("Matematyczne sumowanie wag i weryfikacja w Pythonie...")
+                        status_text.text("Matematyczne sumowanie wag netto w Pythonie...")
                         
-                        # Deterministyczne parsowanie i sumowanie w DataFrame Pandas
                         csv_data_string = "\n".join(extracted_csv_lines)
                         try:
                             df_parsed = pd.read_csv(StringIO(csv_data_string), sep=";", on_bad_lines='skip')
                         except Exception:
                             df_parsed = pd.DataFrame(columns=["Nazwa_Produktu", "Kod_TARIC", "Masa_Netto_KG", "Czy_CBAM", "Kategoria_CBAM"])
 
-                        # Czyszczenie i twarde wyliczenie matematyczne w kolumnie mas
                         if "Masa_Netto_KG" in df_parsed.columns:
                             df_parsed["Masa_Netto_KG"] = df_parsed["Masa_Netto_KG"].astype(str).str.replace(" ", "").str.replace(",", ".").str.extract(r"(\d+\.?\d*)")[0].astype(float).fillna(0)
                         else:
@@ -878,24 +877,24 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                         if "Czy_CBAM" not in df_parsed.columns:
                             df_parsed["Czy_CBAM"] = "TAK"
 
-                        # Filtrowanie pozycji objętych CBAM
                         df_cbam_filtered = df_parsed[df_parsed["Czy_CBAM"].astype(str).str.upper().str.contains("TAK", na=False)]
+                        
+                        # TWARDY MATEMATYCZNY SUMARYCZNY WYNIK W PANDAS
                         total_weight_kg = df_cbam_filtered["Masa_Netto_KG"].sum()
                         total_weight_t = total_weight_kg / 1000.0
                         is_above_de_minimis = "TAK" if total_weight_t > 50.0 else "NIE"
 
                         dzisiejsza_data = datetime.now().strftime("%d.%m.%Y")
                         
-                        # Generowanie ostatecznego raportu z gotową, matematycznie zweryfikowaną sumą
                         summary_prompt = (
                             f"Jesteś głównym biegłym ds. celnych i CBAM dla firmy: {st.session_state.current_company}.\n"
                             f"Oficjalna data sporządzenia raportu to: {dzisiejsza_data}.\n"
-                            f"MATEMATYCZNIE ZWERYFIKOWANE DANE (wyliczone twardo przez skrypt Python):\n"
-                            f"- Łączna masa netto towarów CBAM: {total_weight_kg:,.2f} kg ({total_weight_t:,.2f} ton)\n"
+                            f"OFICJALNE, TWARDYCH DANE WYZNACZONE MATEMATYCZNIE PRZEZ SKRYPT PYTHON:\n"
+                            f"- Łączna zsumowana masa netto towarów CBAM: {total_weight_kg:,.2f} kg ({total_weight_t:,.2f} ton)\n"
                             f"- Przekroczenie progu de minimis (50 ton): {is_above_de_minimis}\n\n"
-                            f"Oto ekstrakcja pozycji towarowych ze wszystkich {total_files} dokumentów:\n"
+                            f"Oto zestawienie pozycji:\n"
                             f"{df_cbam_filtered.to_string(index=False)}\n\n"
-                            "Przygotuj profesjonalny, czytelny raport w formacie Markdown dla spółki, wklejając dokładnie powyższe wartości mas oraz rozbijając je na kategorie (np. żelazo/stal, aluminium)."
+                            "Przygotuj profesjonalny raport w formacie Markdown zawierający powyższe wyliczone masy."
                         )
 
                         final_res = safe_generate_content(client, selected_model, [summary_prompt])
@@ -903,7 +902,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                         
                         status_text.empty()
                         progress_bar.empty()
-                        st.success(f"✅ Przetworzono pliki, a masa została zsumowana deterministycznie w Pythonie: **{total_weight_t:,.2f} ton**!")
+                        st.success(f"✅ Sukces! Zsumowano masy netto matematycznie: **{total_weight_t:,.2f} ton**!")
                     except Exception as e:
                         st.error(f"Błąd podczas audytu: {str(e)}")
 
@@ -919,8 +918,6 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
                     cbam_indep_pdf_bytes = generate_cbam_pdf_report(st.session_state.current_company, st.session_state.cbam_indep_result)
                     if cbam_indep_pdf_bytes:
                         st.download_button("📄 Pobierz Raport CBAM (PDF)", data=cbam_indep_pdf_bytes, file_name=f"Raport_CBAM_Etap2_{st.session_state.current_company}.pdf", mime="application/pdf", use_container_width=True)
-                    else:
-                        st.info("💡 Użyj poniższego przycisku Markdown, jeśli PDF napotka ograniczenia znaków.")
             with col_d2:
                 st.download_button(
                     "📥 Pobierz Pełny Raport (Format Markdown / Tekst)",
