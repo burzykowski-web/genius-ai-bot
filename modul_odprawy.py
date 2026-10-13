@@ -43,64 +43,84 @@ def process_stage_2_dataframe(csv_text):
         return pd.DataFrame(columns=default_cols)
         
     try:
-        df = pd.read_csv(StringIO(final_csv_str), sep=";", on_bad_lines='skip')
+        df = pd.read_csv(StringIO(final_csv_str), sep=";", on_bad_lines='skip', header=0)
     except Exception:
         try:
-            df = pd.read_csv(StringIO(final_csv_str), sep=",", on_bad_lines='skip')
+            df = pd.read_csv(StringIO(final_csv_str), sep=",", on_bad_lines='skip', header=0)
         except Exception:
             return pd.DataFrame(columns=default_cols)
             
-    if df.empty or len(df.columns) < 2:
+    if df.empty:
         return pd.DataFrame(columns=default_cols)
 
-    # Konwersja nazw kolumn na stringi, aby uniknąć indeksów numerycznych
+    # Bezpieczne mapowanie kolumn po indeksach lub nazwach
     df.columns = [str(c).strip() for c in df.columns]
-
-    col_map = {}
-    for c in df.columns:
-        c_low = c.lower()
-        if "catalog" in c_low or "sku" in c_low or "artikel" in c_low or "positions" in c_low or "art" in c_low or c_low == "invoice positions":
-            col_map[c] = "Invoice Positions"
-        elif "name" in c_low or "produkt" in c_low or "towar" in c_low or "desc" in c_low:
-            col_map[c] = "Nazwa Produktu"
-        elif "material" in c_low or "skład" in c_low or "sklad" in c_low:
-            col_map[c] = "Skład Materiałowy"
-        elif "hs" in c_low or "taric" in c_low or "cn" in c_low or "code" in c_low:
-            col_map[c] = "HS CODE"
-        elif "ctns" in c_low or "karton" in c_low:
-            col_map[c] = "CTNS"
-        elif "quant" in c_low or "szt" in c_low or "pcs" in c_low or "quantity" in c_low:
-            col_map[c] = "Quantity (pcs.)"
-        elif "nw" in c_low or "netto" in c_low:
-            col_map[c] = "N.W KGS"
-        elif "gw" in c_low or "brutto" in c_low:
-            col_map[c] = "G.W KGS"
-        elif "amount" in c_low or "wart" in c_low or "price" in c_low or "total" in c_low:
-            col_map[c] = "Amount (EUR)"
-        elif "waluta" in c_low or "curr" in c_low:
-            col_map[c] = "Waluta"
-            
-    df = df.rename(columns=col_map)
     
-    required_fields = ["Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE", "CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)", "Waluta"]
-    for rc in required_fields:
-        if rc not in df.columns:
-            if rc in ["CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"]:
-                df[rc] = 0.0
-            else:
-                df[rc] = ""
-
-    if "Waluta" not in df.columns:
-        df["Waluta"] = "EUR"
+    # Tworzymy czysty DataFrame z wymagowanymi kolumnami na podstawie dostępnych danych
+    mapped_data = []
+    for _, row in df.iterrows():
+        row_dict = {}
+        # Próbujemy wyciągnąć wartości w zależności od tego, jakie kolumny rozpoznał pandas
+        row_str = " ".join([str(v) for v in row.values])
         
-    for col in ["CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"]:
-        df[col] = df[col].apply(clean_numeric_value)
+        # Przypisanie domyślne dla bezpieczeństwa
+        inv_pos = ""
+        name = ""
+        material = ""
+        hs = ""
+        ctns = 0.0
+        qty = 0.0
+        nw = 0.0
+        gw = 0.0
+        amt = 0.0
+        cur = "EUR"
 
-    for text_col in ["Nazwa Produktu", "Skład Materiałowy", "Invoice Positions", "HS CODE"]:
-        df[text_col] = df[text_col].apply(lambda x: str(x) if not isinstance(x, pd.DataFrame) else "").fillna("").astype(str).str.strip().str.upper()
+        for idx, col_name in enumerate(df.columns):
+            val = row.iloc[idx]
+            c_low = col_name.lower()
+            if "catalog" in c_low or "sku" in c_low or "positions" in c_low or "art" in c_low:
+                inv_pos = str(val)
+            elif "name" in c_low or "produkt" in c_low or "towar" in c_low or "desc" in c_low:
+                name = str(val)
+            elif "material" in c_low or "skład" in c_low or "sklad" in c_low:
+                material = str(val)
+            elif "hs" in c_low or "taric" in c_low or "cn" in c_low or "code" in c_low:
+                hs = str(val)
+            elif "ctns" in c_low or "karton" in c_low:
+                ctns = clean_numeric_value(val)
+            elif "quant" in c_low or "szt" in c_low or "pcs" in c_low:
+                qty = clean_numeric_value(val)
+            elif "nw" in c_low or "netto" in c_low:
+                nw = clean_numeric_value(val)
+            elif "gw" in c_low or "brutto" in c_low:
+                gw = clean_numeric_value(val)
+            elif "amount" in c_low or "wart" in c_low or "price" in c_low or "total" in c_low:
+                amt = clean_numeric_value(val)
+            elif "waluta" in c_low or "curr" in c_low:
+                cur = str(val)
 
-    df = df[df["Nazwa Produktu"] != ""]
-    if df.empty:
+        # Fallback jeśli kolumny były bez nagłówków (kolejność standardowa)
+        if not name and len(row.values) >= 3:
+            name = str(row.values[2])
+        if not material and len(row.values) >= 4:
+            material = str(row.values[3])
+
+        mapped_data.append({
+            "Invoice Positions": inv_pos if inv_pos and inv_pos != "nan" else "",
+            "Nazwa Produktu": name.strip().upper() if name and name != "nan" else "PRODUKT ZBIORCZY",
+            "Skład Materiałowy": material.strip().upper() if material and material != "nan" else "",
+            "HS CODE": hs if hs and hs != "nan" else "",
+            "CTNS": ctns,
+            "Quantity (pcs.)": qty,
+            "N.W KGS": nw,
+            "G.W KGS": gw,
+            "Amount (EUR)": amt,
+            "Waluta": cur if cur and cur != "nan" else "EUR"
+        })
+
+    df_clean = pd.DataFrame(mapped_data)
+    df_clean = df_clean[df_clean["Nazwa Produktu"] != ""]
+    if df_clean.empty:
         return pd.DataFrame(columns=default_cols)
 
     agg_dict = {
@@ -109,25 +129,22 @@ def process_stage_2_dataframe(csv_text):
         "N.W KGS": "sum",
         "G.W KGS": "sum",
         "Amount (EUR)": "sum",
-        "Invoice Positions": lambda x: ", ".join(sorted(list(set(str(v).strip() for v in x if pd.notna(v) and str(v).strip() not in ["", "nan", "None", "DATAFRAME"])))) if any(pd.notna(v) for v in x) else "",
-        "HS CODE": lambda x: " / ".join(sorted(list(set(str(v).strip() for v in x if pd.notna(v) and str(v).strip() not in ["", "nan", "None", "DATAFRAME"])))) if any(pd.notna(v) for v in x) else "",
+        "Invoice Positions": lambda x: ", ".join(sorted(list(set(str(v).strip() for v in x if pd.notna(v) and str(v).strip() not in ["", "nan", "None"])))) if any(pd.notna(v) for v in x) else "",
+        "HS CODE": lambda x: " / ".join(sorted(list(set(str(v).strip() for v in x if pd.notna(v) and str(v).strip() not in ["", "nan", "None"])))) if any(pd.notna(v) for v in x) else "",
         "Waluta": "first"
     }
 
     try:
-        df_grouped = df.groupby(["Nazwa Produktu", "Skład Materiałowy"], as_index=False).agg(agg_dict)
+        df_grouped = df_clean.groupby(["Nazwa Produktu", "Skład Materiałowy"], as_index=False).agg(agg_dict)
     except Exception:
-        df_grouped = df.copy()
+        df_grouped = df_clean.copy()
 
     if df_grouped is None or df_grouped.empty:
         return pd.DataFrame(columns=default_cols)
 
-    for rc in required_fields:
-        if rc not in df_grouped.columns:
-            if rc in ["CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"]:
-                df_grouped[rc] = 0.0
-            else:
-                df_grouped[rc] = ""
+    for rc in default_cols:
+        if rc not in df_grouped.columns and rc != "pos":
+            df_grouped[rc] = 0.0 if rc in ["CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"] else ""
     
     df_grouped = df_grouped[["Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE", "CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)", "Waluta"]]
     df_grouped.insert(0, "pos", range(1, len(df_grouped) + 1))
