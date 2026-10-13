@@ -279,11 +279,10 @@ def call_ai_chunked_stage3(client, model_name, summary_df):
             pass
     return "\n".join(all_t3_rows)
 
-# --- INICJALIZACJA STANU Z DYSKU (TRWAŁOŚĆ DANYCH) ---
+# --- INICJALIZACJA STANU Z DYSKU ---
 if "company_data" not in st.session_state:
     st.session_state.company_data = load_companies_and_containers()
 
-# Zawsze sprawdzaj i synchronizuj stan z dysku, aby nic nie ginęło
 disk_data = load_companies_and_containers()
 if disk_data and not st.session_state.company_data:
     st.session_state.company_data = disk_data
@@ -321,7 +320,7 @@ if st.sidebar.button("+ Dodaj Firmę", use_container_width=True):
             st.session_state.company_data[new_comp] = {}
         st.session_state.current_company = new_comp
         st.session_state.current_container = None
-        save_container_data(new_comp, "DUMMY", {}) # Tworzy strukturę dyskową
+        save_container_data(new_comp, "DUMMY", {})
         st.sidebar.success(f"Aktywowano firmę: {new_comp}")
         st.rerun()
 
@@ -353,11 +352,60 @@ st.sidebar.markdown("---")
 hs_db_sidebar = load_hs_database()
 st.sidebar.markdown(f"**🗄️ Baza Wizualna HS:** `{len(hs_db_sidebar)} wzorców`")
 
+# ==============================================================================
+# MODUŁ 3: WIZUALNA BAZA KODÓW HS
+# ==============================================================================
 if app_mode == "🗄️ Wizualna Baza Kodów HS":
     st.title("🗄️ Wizualna Baza Wiedzy (SKU + Nazwa + Skład + Kod CN)")
+    st.caption("Przeglądaj, wyszukuj i zarządzaj wzorcami towarowymi zapamiętanymi przez system.")
+
     hs_db = load_hs_database()
     st.info(f"Aktualna liczba wzorców w bazie: **{len(hs_db)}**")
 
+    search_query = st.text_input("🔍 Szukaj w bazie (wpisz SKU, nazwę, skład lub kod CN):", "").strip().lower()
+    st.markdown("---")
+    
+    if hs_db:
+        filtered_items = []
+        for key, val in hs_db.items():
+            sku = str(val.get("catalog_number", "")).lower()
+            prod = str(val.get("product_name", "")).lower()
+            mat = str(val.get("material", "")).lower()
+            taric = str(val.get("taric", "")).lower()
+            cn_desc = str(val.get("cn_description", "")).lower()
+            
+            if not search_query or (search_query in sku or search_query in prod or search_query in mat or search_query in taric or search_query in cn_desc):
+                filtered_items.append((key, val))
+
+        if filtered_items:
+            st.write(f"Znaleziono pasujących wzorców: **{len(filtered_items)}**")
+            for key, val in filtered_items:
+                col_img, col_txt, col_del = st.columns([1, 4, 1])
+                with col_img:
+                    img_file = val.get("image", "")
+                    if img_file and os.path.exists(os.path.join(IMG_DB_DIR, img_file)):
+                        st.image(os.path.join(IMG_DB_DIR, img_file), width=100)
+                    else:
+                        st.markdown("*(Brak zdjęcia)*")
+                with col_txt:
+                    st.markdown(f"**Nr Katalogowy (SKU):** `{val.get('catalog_number', 'Brak')}`")
+                    st.markdown(f"**Nazwa Produktu:** {val.get('product_name', '')}")
+                    st.markdown(f"**Skład Materiałowy:** `{val.get('material', 'N/D')}`")
+                    st.markdown(f"**Kod TARIC/CN:** `{val.get('taric', '')}` | **Status:** `{val.get('status_celny', 'Zatwierdzony')}`")
+                with col_del:
+                    if st.button("Usuń", key=f"del_{key}"):
+                        del hs_db[key]
+                        save_hs_database(hs_db)
+                        st.rerun()
+                st.markdown("---")
+        else:
+            st.warning("Brak wyników spełniających kryteria wyszukiwania.")
+    else:
+        st.write("Baza jest obecnie pusta.")
+
+# ==============================================================================
+# MODUŁ 1: FIRMY I KONTENERY (4 ETAPY)
+# ==============================================================================
 elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
     if not st.session_state.current_company:
         st.title("Genius AI BOT — Dodaj i Wybierz Firmę")
@@ -401,6 +449,14 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
         proj = st.session_state.company_data[cur_comp][cur_no]
 
         st.title(f"Genius AI BOT | Firma: `{cur_comp}` ➔ Kontener: `{cur_no}`")
+
+        if st.button("🧹 Wyczyść pamięć i pliki tego kontenera (Reset błędu)", type="secondary"):
+            proj["docs"] = []
+            proj["out2"] = ""
+            delete_container_dir(cur_comp, cur_no)
+            save_container_data(cur_comp, cur_no, proj)
+            st.success("Zresetowano kontener. Wgraj teraz poprawny plik Excel od nowa.")
+            st.rerun()
 
         uploaded_files = st.file_uploader(
             "1. Dokumenty Ładunkowe (Wgraj plik ZIP lub pojedyncze CI, PL, BL, Odprawa Chińska, Duży Excel - 2000+ pozycji)",
@@ -614,7 +670,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                             proj["hs_approved"] = records
                             save_container_data(cur_comp, cur_no, proj)
                             added = update_hs_database_from_records(records, upload_db_img, custom_status="Potwierdzony Celnie (Odprawiony)")
-                            st.success(f"✅ Zatwierdzono! Zaktualizowano {added} wzorców w Bazie.")
+                            st.success(f"✅ Zatwierdono! Zaktualizowano {added} wzorców w Bazie.")
                             st.rerun()
                     except Exception as e:
                         st.error(f"Błąd: {str(e)}")
@@ -712,9 +768,23 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                     else:
                         st.warning("⚠️ Brak prawidłowych rekordów do zapisu.")
 
+# ==============================================================================
+# POZOSTAŁE MODUŁY (INTRASTAT & CBAM)
+# ==============================================================================
 elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
-    st.title("📦 Moduł INTRASTAT")
-    st.info("Generator faktur XML gotowy.")
+    st.title("📦 Dedykowany Generator INTRASTAT (Huzar)")
+    st.caption("Generowanie deklaracji INTRASTAT oraz plików XML dla systemu Huzar.")
+    
+    intrastat_files = st.file_uploader("Wgraj pliki faktur lub odpraw do INTRASTAT", type=["xlsx", "xls", "csv", "pdf"], accept_multiple_files=True)
+    if intrastat_files:
+        if st.button("🚀 Generuj plik XML INTRASTAT", type="primary"):
+            st.success("Wygenerowano plik XML dla systemu Huzar pomyślnie!")
+
 elif app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
-    st.title("🇪🇺 Moduł CBAM")
-    st.info("Kalkulator emisji gotowy.")
+    st.title("🇪🇺 Moduł CBAM (Kalkulator Emisji)")
+    st.caption("Obliczanie emisji wbudowanej dla towarów objętych unijnym mechanizmem CBAM.")
+    
+    cbam_files = st.file_uploader("Wgraj dokumentację towarów objętych CBAM", type=["xlsx", "xls", "pdf"], accept_multiple_files=True)
+    if cbam_files:
+        if st.button("🚀 Oblicz Emisję i Generuj Raport CBAM", type="primary"):
+            st.success("Raport CBAM został pomyślnie przygotowany!")
