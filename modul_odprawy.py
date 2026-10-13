@@ -29,7 +29,6 @@ def process_stage_2_dataframe(csv_text):
     if not csv_text or not isinstance(csv_text, str):
         return pd.DataFrame(columns=default_cols)
     
-    # Czyszczenie linii i usuwanie powtarzających się nagłówków z paczek AI
     clean_lines = []
     for line in csv_text.split('\n'):
         line_s = line.strip()
@@ -52,11 +51,9 @@ def process_stage_2_dataframe(csv_text):
         except Exception:
             return pd.DataFrame(columns=default_cols)
             
-    # Jeśli DataFrame nie ma sensownych kolumn, przerywamy
     if df.empty or len(df.columns) < 2:
         return pd.DataFrame(columns=default_cols)
 
-    # Standardowe mapowanie kolumn niezależnie od tego, jak nazwał je model
     col_map = {}
     for c in df.columns:
         c_low = str(c).strip().lower()
@@ -90,28 +87,25 @@ def process_stage_2_dataframe(csv_text):
     if "Waluta" not in df.columns:
         df["Waluta"] = "EUR"
         
-    # Konwersja kolumn numerycznych
     for col in ["CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"]:
         if col in df.columns:
             df[col] = df[col].apply(clean_numeric_value)
 
-    # Czyszczenie kluczy tekstowych
-    df["Nazwa Produktu"] = df["Nazwa Produktu"].fillna("").astype(str).str.strip().str.upper()
-    df["Skład Materiałowy"] = df["Skład Materiałowy"].fillna("").astype(str).str.strip().str.upper()
-    df["Invoice Positions"] = df["Invoice Positions"].fillna("").astype(str).str.strip()
+    # Bezpieczne rzutowanie na stringi (zapobiega błędom 'DataFrame' object has no attribute 'str')
+    for text_col in ["Nazwa Produktu", "Skład Materiałowy", "Invoice Positions", "HS CODE"]:
+        if text_col in df.columns:
+            df[text_col] = df[text_col].apply(lambda x: str(x) if not isinstance(x, pd.DataFrame) else "").fillna("").str.strip().str.upper()
 
-    # Odrzucamy wiersze bez nazwy produktu, żeby nie tworzyć śmieciowych wpisów
     df = df[df["Nazwa Produktu"] != ""]
 
-    # Słownik agregacji do grupowania wyłącznie po Nazwie i Składzie Materiałowym
     agg_dict = {
         "CTNS": "sum",
         "Quantity (pcs.)": "sum",
         "N.W KGS": "sum",
         "G.W KGS": "sum",
         "Amount (EUR)": "sum",
-        "Invoice Positions": lambda x: ", ".join(sorted(list(set(str(v).strip() for v in x if pd.notna(v) and str(v).strip() not in ["", "nan", "None"])))) if any(pd.notna(v) for v in x) else "",
-        "HS CODE": lambda x: " / ".join(sorted(list(set(str(v).strip() for v in x if pd.notna(v) and str(v).strip() not in ["", "nan", "None"])))) if any(pd.notna(v) for v in x) else "",
+        "Invoice Positions": lambda x: ", ".join(sorted(list(set(str(v).strip() for v in x if pd.notna(v) and str(v).strip() not in ["", "nan", "None", "DATAFRAME"])))) if any(pd.notna(v) for v in x) else "",
+        "HS CODE": lambda x: " / ".join(sorted(list(set(str(v).strip() for v in x if pd.notna(v) and str(v).strip() not in ["", "nan", "None", "DATAFRAME"])))) if any(pd.notna(v) for v in x) else "",
         "Waluta": "first"
     }
 
@@ -124,7 +118,6 @@ def process_stage_2_dataframe(csv_text):
         if rc not in df_grouped.columns and rc != "pos":
             df_grouped[rc] = 0.0 if rc in ["CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"] else ""
     
-    # Układ kolumn zgodny z aplikacją
     df_grouped = df_grouped[["Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE", "CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)", "Waluta"]]
     df_grouped.insert(0, "pos", range(1, len(df_grouped) + 1))
     
