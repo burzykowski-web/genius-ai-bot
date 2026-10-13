@@ -149,6 +149,12 @@ def save_uploaded_files(company_name, container_no, uploaded_files):
             st.error(f"Błąd zapisu pliku {f.name}: {str(e)}")
     return saved_docs
 
+def delete_container_dir(company_name, container_no):
+    import shutil
+    cont_dir = os.path.join(DATA_DIR, company_name, container_no)
+    if os.path.exists(cont_dir):
+        shutil.rmtree(cont_dir)
+
 def safe_generate_content(client, model_name, contents, max_retries=3, initial_delay=2):
     for attempt in range(max_retries):
         try:
@@ -193,6 +199,61 @@ def process_excel_all_sheets(f_bytes, filename="plik.xls"):
             return f_bytes.decode('utf-8', errors='ignore')
         except Exception:
             return f"[Błąd odczytu pliku Excel: {str(e)}]"
+
+def call_ai_chunked_stage2(client, model_name, base_prompt, full_dataframe_text):
+    lines = full_dataframe_text.strip().split('\n')
+    if len(lines) <= 150:
+        res = safe_generate_content(client, model_name, [base_prompt, full_dataframe_text])
+        return res.text
+    
+    header = lines[0]
+    data_lines = lines[1:]
+    chunk_size = 150
+    chunks = [data_lines[i:i + chunk_size] for i in range(0, len(data_lines), chunk_size)]
+    
+    combined_csv_rows = []
+    for idx, chunk in enumerate(chunks):
+        chunk_text = header + "\n" + "\n".join(chunk)
+        chunk_prompt = f"{base_prompt}\n(Paczka {idx+1} z {len(chunks)})."
+        try:
+            res = safe_generate_content(client, model_name, [chunk_prompt, chunk_text])
+            clean_res = res.text.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
+            for r_idx, r_line in enumerate(clean_res.split('\n')):
+                if r_idx == 0 and "POS;" in r_line.upper():
+                    if not combined_csv_rows: combined_csv_rows.append(r_line)
+                else:
+                    if r_line.strip() and r_line.count(';') >= 4: combined_csv_rows.append(r_line)
+        except Exception:
+            pass
+    return "\n".join(combined_csv_rows)
+
+def call_ai_chunked_stage3(client, model_name, summary_df):
+    records = summary_df.to_dict(orient="records")
+    chunk_size = 100
+    chunks = [records[i:i + chunk_size] for i in range(0, len(records), chunk_size)]
+    
+    all_t3_rows = []
+    header_str = "pos;Invoice Positions;Nazwa Produktu;Skład Materiałowy;Opcjonalne Tłumaczenie;TARIC_PROPOSED;CN_HS_CODE;Oficjalny Opis CN;Reasoning"
+    
+    for idx, chunk in enumerate(chunks):
+        sub_df = pd.DataFrame(chunk)
+        chunk_summary = sub_df[["pos", "Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE"]].to_csv(index=False, sep=";")
+        p3_prompt = (
+            f"Jesteś agentem celnym. Wycinek pozycji (paczka {idx+1} z {len(chunks)}):\n"
+            f"{chunk_summary}\n\n"
+            f"Zwróć wynik jako czysty CSV ze średnikami (;):\n{header_str}"
+        )
+        try:
+            res = safe_generate_content(client, model_name, [p3_prompt])
+            clean_res = res.text.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
+            for r_idx, r_line in enumerate(clean_res.split('\n')):
+                if r_idx == 0 and "pos;" in r_line.lower():
+                    if not all_t3_rows: all_t3_rows.append(r_line)
+                else:
+                    if r_line.strip() and r_line.count(';') >= 4: all_t3_rows.append(r_line)
+        except Exception:
+            pass
+    return "\n".join(all_t3_rows)
 
 # --- SIDEBAR & STEROWANIE ---
 if "company_data" not in st.session_state:
@@ -305,7 +366,7 @@ if app_mode == "🗄️ Wizualna Baza Kodów HS":
         st.write("Baza jest obecnie pusta.")
 
 # ==============================================================================
-# MODUŁ 1: FIRMY I KONTENERY
+# MODUŁ 1: FIRMY I KONTENERY (4 ETAPY PRACY)
 # ==============================================================================
 elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
     if not st.session_state.current_company:
@@ -334,6 +395,13 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
             selected_cont = st.sidebar.selectbox("📦 Wybierz Kontener", options=cont_list, index=curr_cont_idx)
             st.session_state.current_container = selected_cont
 
+            if st.sidebar.button("❌ Usuń bieżący kontener", type="secondary", use_container_width=True):
+                delete_container_dir(st.session_state.current_company, st.session_state.current_container)
+                del st.session_state.company_data[st.session_state.current_company][st.session_state.current_container]
+                remaining = list(st.session_state.company_data[st.session_state.current_company].keys())
+                st.session_state.current_container = remaining[0] if remaining else None
+                st.rerun()
+
     if not st.session_state.current_company or not st.session_state.current_container:
         st.title("Genius AI BOT — Gotowy do Pracy")
         st.info("Wybierz firmę oraz kontener w panelu bocznym.")
@@ -357,20 +425,219 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
         elif proj.get("docs"):
             st.info(f"📂 Wczytano zapisane dokumenty z dysku ({len(proj['docs'])} szt.)")
 
+        def call_ai(prompt, msg="Przetwarzanie dokumentów przez Genius AI BOT..."):
+            if not proj.get("docs"): st.error("Brak załączonych plików dla tego kontenera!"); return None
+            try:
+                client = genai.Client(api_key=api_key)
+                contents = [prompt]
+                for f in proj["docs"]:
+                    f_bytes = f.getvalue()
+                    if not f_bytes: continue
+                    if f.type == "spreadsheet":
+                        excel_text = process_excel_all_sheets(f_bytes, f.name)
+                        contents.append(f"\n--- ZAWARTOŚĆ PLIKU EXCEL ({f.name}) ---\n" + excel_text + "\n")
+                    elif f.type == "application/pdf":
+                        try:
+                            contents.append(types.Part.from_bytes(data=f_bytes, mime_type="application/pdf"))
+                        except Exception:
+                            pass
+                    elif f.type in ["image/jpeg", "application/png"]:
+                        contents.append(types.Part.from_bytes(data=f_bytes, mime_type=f.type))
+                with st.spinner(msg):
+                    res = safe_generate_content(client, selected_model, contents)
+                    return res.text
+            except Exception as e:
+                st.error(f"Błąd połączenia: {str(e)}")
+                return None
+
+        PROMPT_ETAP1 = (
+            f"Jesteś bezwzględnym starszym audytorem celnym dla firmy: {cur_comp}.\n"
+            "Przeprowadź rygorystyczną KONTROLĘ FORMALNĄ I KRZYŻOWĄ (Cross-Check).\n"
+            "1. Sztuki (Quantity/pcs), 2. Kartony/Opakowania, 3. Tabela rozbieżności.\n"
+            "Użyj czytelnego formatowania Markdown z nagłówkami."
+        )
+
+        if st.button("🚀 Wykonaj Pełną Analizę (Wszystkie Etapy Automatycznie)", type="primary", use_container_width=True):
+            if not proj.get("docs"):
+                st.warning("Najpierw załącz dokumenty ładunkowe!")
+            else:
+                res1 = call_ai(PROMPT_ETAP1, "Krok 1/3: Rygorystyczny audyt sztuk i kartonów...")
+                if res1: proj["out1"] = res1
+
+                p2 = (
+                    "Jesteś precyzyjnym skanerem OCR. Odczytaj KAŻDĄ pozycję faktury/PL/Odprawy.\n"
+                    "Wyciągnij bezwzględnie Numer Katalogowy (SKU / Artikel-Nr).\n"
+                    "Zwróć wynik jako czysty CSV ze średnikami (;):\n"
+                    "POS;Catalog_No;Product_Name;Material;HS_CODE;CTNS;Quantity;NW_KGS;GW_KGS;Amount;Waluta"
+                )
+                with st.spinner("Krok 2/3: Automatyczne zbijanie pozycji w tle..."):
+                    client_obj = genai.Client(api_key=api_key)
+                    raw_ocr_text = call_ai(p2, "Odczytywanie OCR...")
+                    if raw_ocr_text:
+                        proj["out2"] = call_ai_chunked_stage2(client_obj, selected_model, p2, raw_ocr_text)
+
+                if proj.get("out2"):
+                    df_grouped_temp = process_stage_2_dataframe(proj["out2"])
+                    with st.spinner("Krok 3/3: Automatyczna taryfikacja..."):
+                        res3 = call_ai_chunked_stage3(client_obj, selected_model, df_grouped_temp)
+                    if res3:
+                        try:
+                            df_temp_t3 = parse_stage_3_csv(res3)
+                            translations = [translate_text_google(f"{r.get('Nazwa Produktu', '')} ({r.get('Skład Materiałowy', '')})") for _, r in df_temp_t3.iterrows()]
+                            if "Opcjonalne Tłumaczenie" not in df_temp_t3.columns:
+                                df_temp_t3.insert(4, "Opcjonalne Tłumaczenie", translations)
+                            proj["out3"] = df_temp_t3.to_csv(index=False, sep=";")
+                        except Exception:
+                            pass
+
+                save_container_data(cur_comp, cur_no, proj)
+                st.success("✅ Pełna analiza zakończona pomyślnie!")
+                st.rerun()
+
+        st.markdown("---")
+
         selected_tab = st.radio(
             "Wybierz Etap Analizy",
-            ["🇩🇪 ⇄ 🇵🇱 Weryfikacja Krzyżowa Odprawy Niemieckiej (SKU)"],
+            [
+                "📋 1. Kontrola Formalna i Odprawa Chińska", 
+                "🧩 2. Zbijanie Pozycji", 
+                "🏷️ 3. Taryfikacja & Weryfikacja Agenta", 
+                "🇩🇪 ⇄ 🇵🇱 Weryfikacja Krzyżowa Odprawy Niemieckiej (SKU)"
+            ],
             horizontal=True
         )
         st.markdown("---")
 
-        if selected_tab == "🇩🇪 ⇄ 🇵🇱 Weryfikacja Krzyżowa Odprawy Niemieckiej (SKU)":
-            st.subheader("🇩🇪 ⇄ 🇵🇱 Weryfikacja Krzyżowa: Niemiecka Odprawa Celna vs Dokumenty Handlowe")
-            st.caption("Wgraj osobno niemieckie odprawy celne oraz dokumenty handlowe, aby system powiązał numery SKU z kodami CN i zasilił bazę.")
+        if selected_tab == "📋 1. Kontrola Formalna i Odprawa Chińska":
+            st.subheader("📋 Audyt Formalny i Krzyżowa Kontrola z Odprawą Chińską")
+            if st.button("Wykonaj Kontrolę Formalną", key="b1"):
+                res = call_ai(PROMPT_ETAP1)
+                if res: proj["out1"] = res; save_container_data(cur_comp, cur_no, proj); st.rerun()
+            if proj.get("out1"):
+                st.markdown("---")
+                col_title, col_pdf = st.columns([3, 1])
+                with col_title: st.success("✅ Wynik audytu gotowy")
+                with col_pdf:
+                    if FPDF_AVAILABLE:
+                        pdf_bytes = generate_formal_pdf_report(cur_no, proj["out1"])
+                        st.download_button("📄 Pobierz Raport PDF", data=pdf_bytes, file_name=f"Raport_Formalny_{cur_comp}_{cur_no}.pdf", mime="application/pdf", use_container_width=True)
+                st.markdown(proj["out1"])
 
+        elif selected_tab == "🧩 2. Zbijanie Pozycji":
+            st.subheader("🧩 Agregacja Pozycji (Rozdzielenie Nazwy i Materiału)")
+            if st.button("Wykonaj Zbijanie Pozycji", key="b2"):
+                p2 = (
+                    "Jesteś skanerem OCR. Odczytaj KAŻDĄ pozycję oraz Numer Katalogowy (SKU).\n"
+                    "Zwróć wynik jako czysty CSV ze średnikami (;):\n"
+                    "POS;Catalog_No;Product_Name;Material;HS_CODE;CTNS;Quantity;NW_KGS;GW_KGS;Amount;Waluta"
+                )
+                with st.spinner("Automatyczne zbijanie pozycji..."):
+                    client_obj = genai.Client(api_key=api_key)
+                    raw_ocr_text = call_ai(p2)
+                    if raw_ocr_text:
+                        proj["out2"] = call_ai_chunked_stage2(client_obj, selected_model, p2, raw_ocr_text)
+                        save_container_data(cur_comp, cur_no, proj)
+                        st.rerun()
+            
+            if proj.get("out2"):
+                try:
+                    grouped = process_stage_2_dataframe(proj["out2"])
+                    col1, col2, col3, col4, col5 = st.columns(5)
+                    col1.metric("Kartony", f"{grouped['CTNS'].sum():,.0f}")
+                    col2.metric("Sztuki", f"{grouped['Quantity (pcs.)'].sum():,.0f}")
+                    col3.metric("Masa Netto", f"{grouped['N.W KGS'].sum():,.1f} kg")
+                    col4.metric("Masa Brutto", f"{grouped['G.W KGS'].sum():,.1f} kg")
+                    col5.metric("Wartość", f"{grouped['Amount (EUR)'].sum():,.2f}")
+
+                    st.dataframe(grouped, use_container_width=True, hide_index=True)
+                except Exception as e:
+                    st.error(f"Błąd wyświetlania: {str(e)}")
+
+        elif selected_tab == "🏷️ 3. Taryfikacja & Weryfikacja Agenta":
+            st.subheader("🏷️ Etap 3: Taryfikacja (Pamięć po SKU + Nazwa + Skład)")
+            if not proj.get("out2"):
+                st.warning("⚠️ Najpierw wykonaj Etap 2 (Zbijanie Pozycji)!")
+            else:
+                if st.button("Wykonaj Taryfikację Zbieganych Pozycji", key="b3"):
+                    try:
+                        df_stage2 = process_stage_2_dataframe(proj["out2"])
+                        with st.spinner("Automatyczna taryfikacja..."):
+                            client_obj = genai.Client(api_key=api_key)
+                            res = call_ai_chunked_stage3(client_obj, selected_model, df_stage2)
+                        if res:
+                            df_temp_t3 = parse_stage_3_csv(res)
+                            translations = [translate_text_google(f"{r.get('Nazwa Produktu', '')} ({r.get('Skład Materiałowy', '')})") for _, r in df_temp_t3.iterrows()]
+                            if "Opcjonalne Tłumaczenie" not in df_temp_t3.columns:
+                                df_temp_t3.insert(4, "Opcjonalne Tłumaczenie", translations)
+                            proj["out3"] = df_temp_t3.to_csv(index=False, sep=";")
+                            save_container_data(cur_comp, cur_no, proj)
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Błąd: {str(e)}")
+
+                if proj.get("out3"):
+                    try:
+                        df_t3 = parse_stage_3_csv(proj["out3"])
+                        current_db = load_hs_database()
+                        db_matched, final_codes, cn_descriptions, opt_translations, statuses = [], [], [], [], []
+                        
+                        for _, row in df_t3.iterrows():
+                            sku = str(row.get("Catalog_No", row.get("Numer Katalogowy", ""))).strip()
+                            p_name = str(row.get("Nazwa Produktu", "")).strip()
+                            mat = str(row.get("Skład Materiałowy", "")).strip()
+                            proposed_code = str(row.get("TARIC_PROPOSED", row.get("CN_HS_CODE", ""))).strip()
+                            proposed_cn_desc = str(row.get("Oficjalny Opis CN", row.get("Reasoning", ""))).strip()
+                            proposed_opt_trans = str(row.get("Opcjonalne Tłumaczenie", translate_text_google(f"{p_name} ({mat})"))).strip()
+                            
+                            matched_in_db = False
+                            if sku and sku.lower() not in ["", "n/d", "nan", "none"]:
+                                sku_key = f"sku_{sku.lower()}"
+                                if sku_key in current_db:
+                                    db_v = current_db[sku_key]
+                                    db_matched.append(True)
+                                    final_codes.append(db_v.get("taric", proposed_code))
+                                    cn_descriptions.append(db_v.get("cn_description", proposed_cn_desc))
+                                    opt_translations.append(db_v.get("optional_translation", proposed_opt_trans))
+                                    statuses.append("🟢 PAMIĘĆ SKU (Auto)")
+                                    matched_in_db = True
+
+                            if not matched_in_db:
+                                db_matched.append(False)
+                                final_codes.append(proposed_code)
+                                cn_descriptions.append(proposed_cn_desc)
+                                opt_translations.append(proposed_opt_trans)
+                                statuses.append("🟡 Do Weryfikacji AI")
+
+                        df_t3["Status Bazy"] = statuses
+                        df_t3["Opcjonalne Tłumaczenie"] = opt_translations
+                        df_t3["Oficjalny Opis CN"] = cn_descriptions
+
+                        if "df_editor" not in proj or not proj["hs_approved"]:
+                            df_editor_init = df_t3.copy()
+                            df_editor_init["Zaakceptowano"] = db_matched
+                            df_editor_init["Ostateczny Kod TARIC"] = final_codes
+                            df_editor_init["Status Celny"] = ["Potwierdzony Celnie (Odprawiony)" if m else "Do weryfikacji" for m in db_matched]
+                        else:
+                            df_editor_init = pd.DataFrame(proj["hs_approved"])
+
+                        edited_df = st.data_editor(df_editor_init, use_container_width=True, hide_index=True, num_rows="dynamic", key=f"editor_{cur_no}")
+                        upload_db_img = st.file_uploader("📷 Wgraj zdjęcie referencyjne", type=["jpg", "jpeg", "png"], key=f"img_up_{cur_no}")
+
+                        if st.button("💾 Zatwierdź Kody HS i Zapisz do Bazy", type="primary"):
+                            records = edited_df.to_dict(orient="records")
+                            proj["hs_approved"] = records
+                            save_container_data(cur_comp, cur_no, proj)
+                            added = update_hs_database_from_records(records, upload_db_img, custom_status="Potwierdzony Celnie (Odprawiony)")
+                            st.success(f"✅ Zatwierdzono! Zaktualizowano {added} wzorców w Bazie.")
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Błąd: {str(e)}")
+
+        elif selected_tab == "🇩🇪 ⇄ 🇵🇱 Weryfikacja Krzyżowa Odprawy Niemieckiej (SKU)":
+            st.subheader("🇩🇪 ⇄ 🇵🇱 Weryfikacja Krzyżowa: Niemiecka Odprawa Celna vs Dokumenty Handlowe")
             col_de, col_pl = st.columns(2)
             with col_de:
-                uploaded_german_zoll = st.file_uploader("1. Niemiecka Odprawa Celna (ATLAS / PDF / Excel)", type=["pdf", "xlsx", "xls", "png", "jpg", "jpeg"], accept_multiple_files=True, key="german_zoll_file_tab")
+                uploaded_german_zoll = st.file_uploader("1. Niemiecka Odprawa Celna", type=["pdf", "xlsx", "xls", "png", "jpg", "jpeg"], accept_multiple_files=True, key="german_zoll_file_tab")
             with col_pl:
                 uploaded_commercial_docs = st.file_uploader("2. Faktury (CI) & Packing Listy (PL)", type=["pdf", "xlsx", "xls", "png", "jpg", "jpeg", "zip"], accept_multiple_files=True, key="commercial_docs_files_tab")
 
@@ -381,33 +648,26 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                     try:
                         client = genai.Client(api_key=api_key)
                         analysis_contents = [
-                            "Jesteś ekspertem celnym i systemem OCR. Przeanalizuj wgrane dokumenty: niemieckie odprawy celne oraz dokumenty handlowe (CI/PL).\n"
-                            "Zadanie: Wyciągnij pozycje towarowe, łącząc je w pary na podstawie Numeru Katalogowego (SKU / Artikel-Nr / ART NO.) oraz nazwy.\n"
-                            "Zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) w pierwszej linii, bez żadnego formatowania markdown (bez ```):\n"
+                            "Jesteś ekspertem celnym i systemem OCR. Przeanalizuj wgrane dokumenty.\n"
+                            "Wyciągnij pozycje, łącząc je po Numerze Katalogowym (SKU / Artikel-Nr).\n"
+                            "Zwróć wynik jako czysty kod CSV ze średnikami (;) w pierwszej linii:\n"
                             "Numer_Katalogowy;Nazwa_Produktu;Sklad_Materialowy;Ostateczny_Kod_TARIC;Masa_Netto_KG"
                         ]
-                        
                         for z_file in uploaded_german_zoll or []:
                             zoll_bytes = z_file.getvalue()
                             ext = z_file.name.split(".")[-1].lower()
                             analysis_contents.append(f"\n--- ODPRAWA CELNA ({z_file.name}) ---\n")
-                            if ext in ["xlsx", "xls"]:
-                                analysis_contents.append(process_excel_all_sheets(zoll_bytes, z_file.name))
-                            elif ext == "pdf":
-                                analysis_contents.append(types.Part.from_bytes(data=zoll_bytes, mime_type="application/pdf"))
-                            else:
-                                analysis_contents.append(types.Part.from_bytes(data=zoll_bytes, mime_type="image/jpeg"))
+                            if ext in ["xlsx", "xls"]: analysis_contents.append(process_excel_all_sheets(zoll_bytes, z_file.name))
+                            elif ext == "pdf": analysis_contents.append(types.Part.from_bytes(data=zoll_bytes, mime_type="application/pdf"))
+                            else: analysis_contents.append(types.Part.from_bytes(data=zoll_bytes, mime_type="image/jpeg"))
 
                         for c_file in uploaded_commercial_docs or []:
                             c_bytes = c_file.getvalue()
                             ext = c_file.name.split(".")[-1].lower()
                             analysis_contents.append(f"\n--- DOKUMENT HANDLOWY ({c_file.name}) ---\n")
-                            if ext in ["xlsx", "xls"]:
-                                analysis_contents.append(process_excel_all_sheets(c_bytes, c_file.name))
-                            elif ext == "pdf":
-                                analysis_contents.append(types.Part.from_bytes(data=c_bytes, mime_type="application/pdf"))
-                            else:
-                                analysis_contents.append(types.Part.from_bytes(data=c_bytes, mime_type="image/jpeg"))
+                            if ext in ["xlsx", "xls"]: analysis_contents.append(process_excel_all_sheets(c_bytes, c_file.name))
+                            elif ext == "pdf": analysis_contents.append(types.Part.from_bytes(data=c_bytes, mime_type="application/pdf"))
+                            else: analysis_contents.append(types.Part.from_bytes(data=c_bytes, mime_type="image/jpeg"))
 
                         with st.spinner("Przetwarzanie weryfikacji krzyżowej i ekstrakcja SKU..."):
                             res_cross = safe_generate_content(client, selected_model, analysis_contents)
@@ -425,18 +685,15 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                             save_container_data(cur_comp, cur_no, proj)
                             st.success("✅ Weryfikacja krzyżowa zakończona pomyślnie!")
                             st.rerun()
-
                     except Exception as e:
                         st.error(f"Błąd podczas weryfikacji: {str(e)}")
 
             if proj.get("cross_check_df"):
                 st.markdown("---")
                 st.markdown("### 📋 Edytowalna Tabela Dopasowania SKU z Odprawy")
-                
                 df_cross_editable = pd.DataFrame(proj["cross_check_df"])
                 edited_cross_df = st.data_editor(df_cross_editable, use_container_width=True, hide_index=True, num_rows="dynamic", key="cross_editor")
-                
-                upload_sku_img = st.file_uploader("📷 Wgraj zdjęcie referencyjne do bazy dla tych SKU (opcjonalnie)", type=["jpg", "jpeg", "png"], key="sku_img_upload")
+                upload_sku_img = st.file_uploader("📷 Wgraj zdjęcie referencyjne do bazy dla tych SKU", type=["jpg", "jpeg", "png"], key="sku_img_upload")
 
                 if st.button("💾 Zapisz Zweryfikowane SKU bezpośrednio do Bazy HS", type="primary", use_container_width=True):
                     records_to_save = []
@@ -459,15 +716,11 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                     
                     if records_to_save:
                         added_cnt = update_hs_database_from_records(records_to_save, upload_sku_img, custom_status="Potwierdzony Celnie (Odprawiony)")
-                        st.success(f"🎉 Pomyślnie zapisano i zaktualizowano **{added_cnt}** wzorców w Wizualnej Bazie HS po numerach katalogowych (SKU)!")
+                        st.success(f"🎉 Zapisano i zaktualizowano **{added_cnt}** wzorców w Bazie HS!")
                         time.sleep(1)
                         st.rerun()
                     else:
-                        st.warning("⚠️ Brak prawidłowych rekordów do zapisu w tabeli.")
-
-            elif proj.get("cross_check_sku_result"):
-                st.markdown("---")
-                st.text_area("Wynik analizy tekstowej:", proj["cross_check_sku_result"], height=200)
+                        st.warning("⚠️ Brak prawidłowych rekordów do zapisu.")
 
 elif app_mode == "📦 Dedykowany Generator INTRASTAT (Huzar)":
     st.title("📦 Moduł INTRASTAT")
