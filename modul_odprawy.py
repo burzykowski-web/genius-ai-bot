@@ -9,7 +9,6 @@ def clean_numeric_value(val):
     s = str(val).strip()
     if not s or s.lower() in ["nan", "none", "n/d", ""]:
         return 0.0
-    
     if "," in s and "." in s:
         if s.rfind(",") > s.rfind("."):
             s = s.replace(".", "").replace(",", ".")
@@ -17,7 +16,6 @@ def clean_numeric_value(val):
             s = s.replace(",", "")
     elif "," in s:
         s = s.replace(",", ".")
-        
     s_clean = re.sub(r'[^\d.-]', '', s)
     try:
         return float(s_clean)
@@ -55,9 +53,12 @@ def process_stage_2_dataframe(csv_text):
     if df.empty or len(df.columns) < 2:
         return pd.DataFrame(columns=default_cols)
 
+    # Konwersja nazw kolumn na stringi, aby uniknąć indeksów numerycznych
+    df.columns = [str(c).strip() for c in df.columns]
+
     col_map = {}
     for c in df.columns:
-        c_low = str(c).strip().lower()
+        c_low = c.lower()
         if "catalog" in c_low or "sku" in c_low or "artikel" in c_low or "positions" in c_low or "art" in c_low or c_low == "invoice positions":
             col_map[c] = "Invoice Positions"
         elif "name" in c_low or "produkt" in c_low or "towar" in c_low or "desc" in c_low:
@@ -81,20 +82,22 @@ def process_stage_2_dataframe(csv_text):
             
     df = df.rename(columns=col_map)
     
-    for rc in default_cols:
-        if rc not in df.columns and rc != "pos":
-            df[rc] = 0.0 if rc in ["CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"] else ""
-            
+    required_fields = ["Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE", "CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)", "Waluta"]
+    for rc in required_fields:
+        if rc not in df.columns:
+            if rc in ["CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"]:
+                df[rc] = 0.0
+            else:
+                df[rc] = ""
+
     if "Waluta" not in df.columns:
         df["Waluta"] = "EUR"
         
     for col in ["CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"]:
-        if col in df.columns:
-            df[col] = df[col].apply(clean_numeric_value)
+        df[col] = df[col].apply(clean_numeric_value)
 
     for text_col in ["Nazwa Produktu", "Skład Materiałowy", "Invoice Positions", "HS CODE"]:
-        if text_col in df.columns:
-            df[text_col] = df[text_col].apply(lambda x: str(x) if not isinstance(x, pd.DataFrame) else "").fillna("").str.strip().str.upper()
+        df[text_col] = df[text_col].apply(lambda x: str(x) if not isinstance(x, pd.DataFrame) else "").fillna("").astype(str).str.strip().str.upper()
 
     df = df[df["Nazwa Produktu"] != ""]
     if df.empty:
@@ -119,9 +122,12 @@ def process_stage_2_dataframe(csv_text):
     if df_grouped is None or df_grouped.empty:
         return pd.DataFrame(columns=default_cols)
 
-    for rc in default_cols:
-        if rc not in df_grouped.columns and rc != "pos":
-            df_grouped[rc] = 0.0 if rc in ["CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"] else ""
+    for rc in required_fields:
+        if rc not in df_grouped.columns:
+            if rc in ["CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"]:
+                df_grouped[rc] = 0.0
+            else:
+                df_grouped[rc] = ""
     
     df_grouped = df_grouped[["Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE", "CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)", "Waluta"]]
     df_grouped.insert(0, "pos", range(1, len(df_grouped) + 1))
