@@ -80,7 +80,7 @@ def load_companies_and_containers():
                 cont_dir = os.path.join(comp_dir, container_no)
                 if os.path.isdir(cont_dir):
                     json_path = os.path.join(cont_dir, "data.json")
-                    c_data = {"out1": "", "out2": "", "out3": "", "calc_audit": "", "docs": [], "hs_approved": [], "cbam_data": "", "cbam_audit_result": ""}
+                    c_data = {"out1": "", "out2": "", "out3": "", "calc_audit": "", "docs": [], "hs_approved": [], "cbam_data": "", "cbam_audit_result": "", "cross_check_sku_result": ""}
                     if os.path.exists(json_path):
                         try:
                             with open(json_path, "r", encoding="utf-8") as f:
@@ -109,7 +109,8 @@ def save_container_data(company_name, container_no, data):
         "calc_audit": data.get("calc_audit", ""),
         "hs_approved": data.get("hs_approved", []),
         "cbam_data": data.get("cbam_data", ""),
-        "cbam_audit_result": data.get("cbam_audit_result", "")
+        "cbam_audit_result": data.get("cbam_audit_result", ""),
+        "cross_check_sku_result": data.get("cross_check_sku_result", "")
     }
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(save_data, f, ensure_ascii=False, indent=2)
@@ -543,7 +544,7 @@ if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
 # MODUŁ 3: WIZUALNA BAZA KODÓW HS
 # ==============================================================================
 elif app_mode == "🗄️ Wizualna Baza Kodów HS":
-    st.title("🗄️ Wizualna Baza Wiedzy (Nazwa + Skład Materiału + Google Translate + Kod CN)")
+    st.title("🗄️ Wizualna Baza Wiedzy (SKU + Nazwa + Skład + Kod CN)")
     st.caption("Przeglądaj, wyszukuj, importuj z plików PDF i zarządzaj wzorcami towarowymi zapamiętanymi przez system.")
 
     hs_db = load_hs_database()
@@ -575,8 +576,9 @@ elif app_mode == "🗄️ Wizualna Baza Kodów HS":
                         prompt_excel_import = (
                             "Jesteś analitykiem celnym. Przeanalizuj poniższe dane z pliku Excel (wszystkie zakładki):\n"
                             f"{excel_text}\n\n"
-                            "Wyciągnij każdą pozycję taryfową i zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) w pierwszej linii bez dodatkowego markdown:\n"
-                            "Nazwa_Produktu;Sklad_Materialowy;Kod_TARIC;Opis_CN;Tlumaczenie"
+                            "Wyciągnij każdą pozycję taryfową uwzględniając Numer Katalogowy (SKU/Artikel-Nr) jeśli jest dostępny.\n"
+                            "Zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) w pierwszej linii bez dodatkowego markdown:\n"
+                            "Numer_Katalogowy;Nazwa_Produktu;Sklad_Materialowy;Kod_TARIC;Opis_CN;Tlumaczenie"
                         )
                         with st.spinner(f"Odczytywanie pliku Excel: {imp_f.name}..."):
                             res_exc = safe_generate_content(client, selected_model, [prompt_excel_import])
@@ -585,29 +587,35 @@ elif app_mode == "🗄️ Wizualna Baza Kodów HS":
                                 if "Nazwa_Produktu" in line or line.count(';') < 2:
                                     continue
                                 parts = line.split(';')
-                                if len(parts) >= 3:
-                                    p_name = parts[0].strip()
-                                    mat = parts[1].strip()
-                                    taric = parts[2].strip()
-                                    cn_desc = parts[3].strip() if len(parts) > 3 else ""
-                                    opt_trans = parts[4].strip() if len(parts) > 4 else ""
+                                if len(parts) >= 4:
+                                    sku = parts[0].strip()
+                                    p_name = parts[1].strip()
+                                    mat = parts[2].strip()
+                                    taric = parts[3].strip()
+                                    cn_desc = parts[4].strip() if len(parts) > 4 else ""
+                                    opt_trans = parts[5].strip() if len(parts) > 5 else ""
                                     
-                                    if p_name and taric and taric != "nan":
-                                        key = f"{p_name}_{mat}_{taric}".lower()
+                                    if taric and taric != "nan":
+                                        key = f"sku_{sku.lower()}" if sku and sku.lower() not in ["", "n/d", "nan"] else f"{p_name}_{mat}_{taric}".lower()
                                         db_current[key] = {
+                                            "catalog_number": sku,
                                             "product_name": p_name,
                                             "material": mat,
                                             "taric": taric,
                                             "cn_description": cn_desc,
                                             "optional_translation": opt_trans,
-                                            "image": ""
+                                            "image": "",
+                                            "status_celny": "Zatwierdzony masowo",
+                                            "mrn": "",
+                                            "data_aktualizacji": datetime.now().strftime("%d.%m.%Y")
                                         }
                                         total_imported += 1
                     elif ext == "pdf":
                         prompt_pdf_import = (
                             "Jesteś analitykiem celnym. Przeanalizuj ten dokument PDF zawierający historyczne taryfikacje towarów.\n"
-                            "Wyciągnij każdą pozycję i zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) w pierwszej linii bez dodatkowego markdown:\n"
-                            "Nazwa_Produktu;Sklad_Materialowy;Kod_TARIC;Opis_CN;Tlumaczenie"
+                            "Wyciągnij każdą pozycję (uwzględniając SKU / Numer Katalogowy).\n"
+                            "Zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) w pierwszej linii bez dodatkowego markdown:\n"
+                            "Numer_Katalogowy;Nazwa_Produktu;Sklad_Materialowy;Kod_TARIC;Opis_CN;Tlumaczenie"
                         )
                         try:
                             contents = [prompt_pdf_import, types.Part.from_bytes(data=f_bytes, mime_type="application/pdf")]
@@ -618,22 +626,27 @@ elif app_mode == "🗄️ Wizualna Baza Kodów HS":
                                     if "Nazwa_Produktu" in line or line.count(';') < 2:
                                         continue
                                     parts = line.split(';')
-                                    if len(parts) >= 3:
-                                        p_name = parts[0].strip()
-                                        mat = parts[1].strip()
-                                        taric = parts[2].strip()
-                                        cn_desc = parts[3].strip() if len(parts) > 3 else ""
-                                        opt_trans = parts[4].strip() if len(parts) > 4 else ""
+                                    if len(parts) >= 4:
+                                        sku = parts[0].strip()
+                                        p_name = parts[1].strip()
+                                        mat = parts[2].strip()
+                                        taric = parts[3].strip()
+                                        cn_desc = parts[4].strip() if len(parts) > 4 else ""
+                                        opt_trans = parts[5].strip() if len(parts) > 5 else ""
                                         
-                                        if p_name and taric and taric != "nan":
-                                            key = f"{p_name}_{mat}_{taric}".lower()
+                                        if taric and taric != "nan":
+                                            key = f"sku_{sku.lower()}" if sku and sku.lower() not in ["", "n/d", "nan"] else f"{p_name}_{mat}_{taric}".lower()
                                             db_current[key] = {
+                                                "catalog_number": sku,
                                                 "product_name": p_name,
                                                 "material": mat,
                                                 "taric": taric,
                                                 "cn_description": cn_desc,
                                                 "optional_translation": opt_trans,
-                                                "image": ""
+                                                "image": "",
+                                                "status_celny": "Zatwierdzony masowo",
+                                                "mrn": "",
+                                                "data_aktualizacji": datetime.now().strftime("%d.%m.%Y")
                                             }
                                             total_imported += 1
                         except Exception:
@@ -647,7 +660,7 @@ elif app_mode == "🗄️ Wizualna Baza Kodów HS":
                 st.error(f"Błąd przetwarzania plików: {str(e)}")
 
     st.markdown("---")
-    search_query = st.text_input("🔍 Szukaj w bazie (wpisz nazwę, skład np. IRON/PU/WOOD, lub kod CN):", "").strip().lower()
+    search_query = st.text_input("🔍 Szukaj w bazie (wpisz SKU, nazwę, skład lub kod CN):", "").strip().lower()
 
     st.markdown("---")
     st.subheader("📋 Wyniki i Lista Wzorców")
@@ -655,13 +668,13 @@ elif app_mode == "🗄️ Wizualna Baza Kodów HS":
     if hs_db:
         filtered_items = []
         for key, val in hs_db.items():
+            sku = str(val.get("catalog_number", "")).lower()
             prod = str(val.get("product_name", "")).lower()
             mat = str(val.get("material", "")).lower()
             taric = str(val.get("taric", "")).lower()
             cn_desc = str(val.get("cn_description", "")).lower()
-            opt_trans = str(val.get("optional_translation", "")).lower()
             
-            if not search_query or (search_query in prod or search_query in mat or search_query in taric or search_query in cn_desc or search_query in opt_trans):
+            if not search_query or (search_query in sku or search_query in prod or search_query in mat or search_query in taric or search_query in cn_desc):
                 filtered_items.append((key, val))
 
         if filtered_items:
@@ -675,11 +688,11 @@ elif app_mode == "🗄️ Wizualna Baza Kodów HS":
                     else:
                         st.markdown("*(Brak zdjęcia)*")
                 with col_txt:
+                    st.markdown(f"**Nr Katalogowy (SKU):** `{val.get('catalog_number', 'Brak')}`")
                     st.markdown(f"**Nazwa Produktu:** {val.get('product_name', '')}")
                     st.markdown(f"**Skład Materiałowy:** `{val.get('material', 'N/D')}`")
-                    st.markdown(f"**Google Translate:** {val.get('optional_translation', 'Brak')}")
-                    st.markdown(f"**Kod TARIC/CN:** `{val.get('taric', '')}`")
-                    st.markdown(f"**Oficjalny Opis CN:** {val.get('cn_description', 'N/D')}")
+                    st.markdown(f"**Kod TARIC/CN:** `{val.get('taric', '')}` | **Status:** `{val.get('status_celny', 'Zatwierdzony')}`")
+                    st.markdown(f"**Opis CN:** {val.get('cn_description', 'N/D')}")
                 with col_del:
                     if st.button("Usuń", key=f"del_{key}"):
                         del hs_db[key]
@@ -808,7 +821,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
             if new_no:
                 if new_no not in st.session_state.company_data[st.session_state.current_company]:
                     st.session_state.company_data[st.session_state.current_company][new_no] = {
-                        "docs": [], "out1": "", "out2": "", "out3": "", "calc_audit": "", "hs_approved": [], "cbam_data": "", "cbam_audit_result": ""
+                        "docs": [], "out1": "", "out2": "", "out3": "", "calc_audit": "", "hs_approved": [], "cbam_data": "", "cbam_audit_result": "", "cross_check_sku_result": ""
                     }
                     save_container_data(st.session_state.current_company, new_no, st.session_state.company_data[st.session_state.current_company][new_no])
                 st.session_state.current_container = new_no
@@ -909,9 +922,9 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                 p2 = (
                     "Jesteś precyzyjnym skanerem OCR. Przeanalizuj poniższe dane z dokumentów oraz ze wszystkich zakładek Excel.\n"
                     "Odczytaj KAŻDĄ pozycję faktury/PL/Odprawy Chińskiej/tabeli z osobna.\n"
-                    "ZASADA BEZWZGLĘDNA: Oddziel nazwę produktu od składu materiałowego (np. materiały takie jak: PU, IRON, WOOD, STEEL, PPE, PLASTIC itp.).\n"
+                    "ZASADA BEZWZGLĘDNA: Oddziel nazwę produktu od składu materiałowego (np. materiały takie jak: PU, IRON, WOOD, STEEL, PPE, PLASTIC itp.). Obowiązkowo wyciągnij Numer Katalogowy (SKU / Artikel-Nr) jeśli występuje.\n"
                     "Zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) i kropką jako separatorem dziesiętnym w pierwszej linii:\n"
-                    "POS;Product_Name;Material;HS_CODE;CTNS;Quantity;NW_KGS;GW_KGS;Amount;Waluta"
+                    "POS;Catalog_No;Product_Name;Material;HS_CODE;CTNS;Quantity;NW_KGS;GW_KGS;Amount;Waluta"
                 )
                 
                 with st.spinner("Krok 2/3: Automatyczne odczytywanie i zbijanie pozycji w tle..."):
@@ -951,7 +964,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
 
         selected_tab = st.radio(
             "Wybierz Etap Analizy",
-            ["📋 1. Kontrola Formalna i Odprawa Chińska", "🧩 2. Zbijanie Pozycji", "🏷️ 3. Taryfikacja & Weryfikacja Agenta"],
+            ["📋 1. Kontrola Formalna i Odprawa Chińska", "🧩 2. Zbijanie Pozycji", "🏷️ 3. Taryfikacja & Weryfikacja Agenta", "🇩🇪 ⇄ 🇵🇱 Weryfikacja Krzyżowa Odprawy Niemieckiej (SKU)"],
             horizontal=True
         )
 
@@ -977,10 +990,9 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
             if st.button("Wykonaj Zbijanie Pozycji", key="b2"):
                 p2 = (
                     "Jesteś precyzyjnym skanerem OCR. Przeanalizuj poniższe dane z dokumentów i ze wszystkich zakładek Excel.\n"
-                    "Odczytaj KAŻDĄ pozycję faktury/PL z osobna.\n"
-                    "Oddziel nazwę produktu od składu materiałowego (np. PU, IRON, WOOD, STEEL, PPE).\n"
+                    "Odczytaj KAŻDĄ pozycję faktury/PL z osobna oraz wyciągnij Numer Katalogowy (SKU / Artikel-Nr).\n"
                     "Zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) i kropką jako separatorem dziesiętnym w pierwszej linii:\n"
-                    "POS;Product_Name;Material;HS_CODE;CTNS;Quantity;NW_KGS;GW_KGS;Amount;Waluta"
+                    "POS;Catalog_No;Product_Name;Material;HS_CODE;CTNS;Quantity;NW_KGS;GW_KGS;Amount;Waluta"
                 )
                 with st.spinner("Automatyczne zbijanie pozycji..."):
                     client_obj = genai.Client(api_key=api_key)
@@ -1017,8 +1029,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                             f"{table_csv_preview}\n\n"
                             "Przeanalizuj oryginalne dokumenty i wykonaj SZCZEGÓŁOWY AUDYT ROZBIEŻNOŚCI:\n"
                             "1. Porównaj ODRĘBNIE liczbę sztuk oraz liczbę kartonów dla każdej pozycji między Fakturą a Packing Listą.\n"
-                            "2. Jeśli występują różnice, wypisz je precyzyjnie w punktach.\n"
-                            "3. Sprawdź ogólne sumy."
+                            "2. Jeśli występują różnice, wypisz je precyzyjnie w punktach."
                         )
                         audit_res = call_ai(audit_prompt, "Audytor niezależnie weryfikuje rozbieżności sztuk i kartonów...")
                         if audit_res:
@@ -1041,15 +1052,94 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                 except Exception as e:
                     st.error(f"Błąd przetwarzania matematycznego: {str(e)}")
 
+        elif selected_tab == "🇩🇪 ⇄ 🇵🇱 Weryfikacja Krzyżowa Odprawy Niemieckiej (SKU)":
+            st.subheader("🇩🇪 ⇄ 🇵🇱 Weryfikacja Krzyżowa: Niemiecka Odprawa Celna vs Dokumenty Handlowe")
+            st.caption("Wgraj osobno niemiecką odprawę celaną oraz dokumenty handlowe (CI/PL), aby system powiązał numery katalogowe (SKU) z kodami CN i zasilił bazę inteligentnej pamięci.")
+
+            col_de, col_pl = st.columns(2)
+            with col_de:
+                uploaded_german_zoll = st.file_uploader(
+                    "1. Niemiecka Odprawa Celna (ATLAS / PDF / Excel)",
+                    type=["pdf", "xlsx", "xls", "png", "jpg", "jpeg"],
+                    key="german_zoll_file_tab"
+                )
+            with col_pl:
+                uploaded_commercial_docs = st.file_uploader(
+                    "2. Faktura (CI) & Packing List (PL)",
+                    type=["pdf", "xlsx", "xls", "png", "jpg", "jpeg", "zip"],
+                    accept_multiple_files=True,
+                    key="commercial_docs_files_tab"
+                )
+
+            if st.button("🚀 Przeprowadź Weryfikację Krzyżową i Zasil Bazę SKU", type="primary", use_container_width=True):
+                if not uploaded_german_zoll and not uploaded_commercial_docs:
+                    st.warning("⚠️ Wgraj przynajmniej jeden plik odprawy niemieckiej lub dokumentu handlowego!")
+                else:
+                    try:
+                        client = genai.Client(api_key=api_key)
+                        analysis_contents = [
+                            "Jesteś ekspertem celnym i systemem OCR. Przeanalizuj wgrane dokumenty: niemiecką odprawę celną oraz dokumenty handlowe (CI/PL).\n"
+                            "Zadanie: Wyciągnij pozycje towarowe, łącząc je w pary na podstawie Numeru Katalogowego (SKU / Artikel-Nr) oraz nazwy.\n"
+                            "Dla każdej pozycji wyciągnij:\n"
+                            "- Numer Katalogowy (SKU / Artikel-Nr)\n"
+                            "- Nazwa Produktu\n"
+                            "- Skład Materiałowy\n"
+                            "- Ostateczny Kod CN / TARIC z niemieckiej odprawy\n"
+                            "- Masa Netto (kg)\n"
+                            "Zwróć wynik w przejrzystej tabeli Markdown oraz jako czysty kod CSV ze średnikami (;) na końcu w bloku kodu."
+                        ]
+                        
+                        if uploaded_german_zoll:
+                            zoll_bytes = uploaded_german_zoll.getvalue()
+                            zoll_ext = uploaded_german_zoll.name.split(".")[-1].lower()
+                            analysis_contents.append(f"\n--- NIEMIECKA ODPRAWA CELNA ({uploaded_german_zoll.name}) ---\n")
+                            if zoll_ext in ["xlsx", "xls"]:
+                                analysis_contents.append(process_excel_all_sheets(zoll_bytes, uploaded_german_zoll.name))
+                            elif zoll_ext == "pdf":
+                                analysis_contents.append(types.Part.from_bytes(data=zoll_bytes, mime_type="application/pdf"))
+                            elif zoll_ext in ["jpg", "jpeg"]:
+                                analysis_contents.append(types.Part.from_bytes(data=zoll_bytes, mime_type="image/jpeg"))
+                            elif zoll_ext == "png":
+                                analysis_contents.append(types.Part.from_bytes(data=zoll_bytes, mime_type="application/png"))
+
+                        if uploaded_commercial_docs:
+                            for c_file in uploaded_commercial_docs:
+                                c_bytes = c_file.getvalue()
+                                c_ext = c_file.name.split(".")[-1].lower()
+                                analysis_contents.append(f"\n--- DOKUMENT HANDLOWY ({c_file.name}) ---\n")
+                                if c_ext in ["xlsx", "xls"]:
+                                    analysis_contents.append(process_excel_all_sheets(c_bytes, c_file.name))
+                                elif c_ext == "pdf":
+                                    analysis_contents.append(types.Part.from_bytes(data=c_bytes, mime_type="application/pdf"))
+                                elif c_ext in ["jpg", "jpeg"]:
+                                    analysis_contents.append(types.Part.from_bytes(data=c_bytes, mime_type="image/jpeg"))
+                                elif c_ext == "png":
+                                    analysis_contents.append(types.Part.from_bytes(data=c_bytes, mime_type="application/png"))
+
+                        with st.spinner("Przetwarzanie weryfikacji krzyżowej i ekstrakcja SKU..."):
+                            res_cross = safe_generate_content(client, selected_model, analysis_contents)
+                            proj["cross_check_sku_result"] = res_cross.text
+                            save_container_data(cur_comp, cur_no, proj)
+                            st.success("✅ Weryfikacja krzyżowa zakończona pomyślnie!")
+                            st.rerun()
+
+                    except Exception as e:
+                        st.error(f"Błąd podczas weryfikacji: {str(e)}")
+
+            if proj.get("cross_check_sku_result"):
+                st.markdown("---")
+                st.markdown("### 📋 Wyniki Dopasowania Numerów Katalogowych (SKU)")
+                st.markdown(proj["cross_check_sku_result"])
+
         elif selected_tab == "🏷️ 3. Taryfikacja & Weryfikacja Agenta":
-            st.subheader("🏷️ Etap 3: Taryfikacja (Nazwa + Skład Materiału + Google Translate)")
+            st.subheader("🏷️ Etap 3: Taryfikacja (Pamięć po SKU + Nazwa + Skład)")
             if not proj.get("out2"):
                 st.warning("⚠️ Najpierw wykonaj Etap 2 (Zbijanie Pozycji)!")
             else:
                 if st.button("Wykonaj Taryfikację Zbieganych Pozycji", key="b3"):
                     try:
                         df_stage2 = process_stage_2_dataframe(proj["out2"])
-                        with st.spinner("Automatyczna taryfikacja paczkowa w tle..."):
+                        with st.spinner("Automatyczna taryfikacja (sprawdzanie pamięci po SKU i AI) w tle..."):
                             client_obj = genai.Client(api_key=api_key)
                             res = call_ai_chunked_stage3(client_obj, selected_model, df_stage2)
                         if res:
@@ -1075,6 +1165,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                         db_matched, final_codes, cn_descriptions, opt_translations, statuses, db_images = [], [], [], [], [], []
                         
                         for _, row in df_t3.iterrows():
+                            sku = str(row.get("Catalog_No", row.get("Numer Katalogowy", ""))).strip()
                             p_name = str(row.get("Nazwa Produktu", "")).strip()
                             mat = str(row.get("Skład Materiałowy", "")).strip()
                             proposed_code = str(row.get("TARIC_PROPOSED", row.get("CN_HS_CODE", ""))).strip()
@@ -1086,20 +1177,35 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                                 proposed_opt_trans = translate_text_google(f"{p_name} ({mat})")
                             
                             matched_in_db = False
-                            for db_k, db_v in current_db.items():
-                                db_prod = str(db_v.get("product_name", "")).strip().lower()
-                                db_mat = str(db_v.get("material", "")).strip().lower()
-                                db_taric = str(db_v.get("taric", "")).strip().lower()
-                                
-                                if db_prod == p_name.lower() and db_mat == mat.lower() and db_taric == proposed_code.lower():
+                            # PRIORYTET 1: Dopasowanie po Numerze Katalogowym (SKU)
+                            if sku and sku.lower() not in ["", "n/d", "nan", "none"]:
+                                sku_key = f"sku_{sku.lower()}"
+                                if sku_key in current_db:
+                                    db_v = current_db[sku_key]
                                     db_matched.append(True)
                                     final_codes.append(db_v.get("taric", proposed_code))
                                     cn_descriptions.append(db_v.get("cn_description", proposed_cn_desc))
                                     opt_translations.append(db_v.get("optional_translation", proposed_opt_trans))
-                                    statuses.append("🟢 BAZA (Auto-Zaakceptowano)")
+                                    statuses.append("🟢 PAMIĘĆ SKU (Auto)")
                                     db_images.append(db_v.get("image", ""))
                                     matched_in_db = True
-                                    break
+
+                            # PRIORYTET 2: Dopasowanie klasyczne (Nazwa + Skład + Kod)
+                            if not matched_in_db:
+                                for db_k, db_v in current_db.items():
+                                    db_prod = str(db_v.get("product_name", "")).strip().lower()
+                                    db_mat = str(db_v.get("material", "")).strip().lower()
+                                    db_taric = str(db_v.get("taric", "")).strip().lower()
+                                    
+                                    if db_prod == p_name.lower() and db_mat == mat.lower() and db_taric == proposed_code.lower():
+                                        db_matched.append(True)
+                                        final_codes.append(db_v.get("taric", proposed_code))
+                                        cn_descriptions.append(db_v.get("cn_description", proposed_cn_desc))
+                                        opt_translations.append(db_v.get("optional_translation", proposed_opt_trans))
+                                        statuses.append("🟢 BAZA (Auto)")
+                                        db_images.append(db_v.get("image", ""))
+                                        matched_in_db = True
+                                        break
                             
                             if not matched_in_db:
                                 db_matched.append(False)
@@ -1114,20 +1220,16 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                         df_t3["Oficjalny Opis CN"] = cn_descriptions
                         df_t3["Zdjęcie wzorca"] = db_images
 
-                        st.markdown("### 🤖 3A. Propozycje AI i Dopasowania z Wizualnej Bazy")
+                        st.markdown("### 🤖 3A. Propozycje AI i Pamięć SKU z Bazy")
                         st.dataframe(df_t3, use_container_width=True, hide_index=True)
                         st.markdown("---")
                         st.markdown("### 👨‍💼 3B. Weryfikacja & Akceptacja Agenta Celnego")
-                        st.info("💡 **Wskazówka:** System sprawdza 3 parametry zgodności (`Nazwa + Skład + Kod CN`) z Twoją Bazą Wizualną. Możesz edytować dowolne pole w tabeli poniżej.")
 
                         if "df_editor" not in proj or not proj["hs_approved"]:
                             df_editor_init = df_t3.copy()
                             df_editor_init["Zaakceptowano"] = db_matched
                             df_editor_init["Ostateczny Kod TARIC"] = final_codes
-                            df_editor_init["Skład Materiałowy"] = [str(r.get("Skład Materiałowy", "")) for _, r in df_t3.iterrows()]
-                            df_editor_init["Opcjonalne Tłumaczenie"] = opt_translations
-                            df_editor_init["Oficjalny Opis CN"] = cn_descriptions
-                            df_editor_init["Uwagi Agenta"] = ["Potwierdzono z Bazy (3 parametry)" if m else "Do weryfikacji" for m in db_matched]
+                            df_editor_init["Status Celny"] = ["Potwierdzony Celnie (Odprawiony)" if m else "Do weryfikacji" for m in db_matched]
                         else:
                             df_editor_init = pd.DataFrame(proj["hs_approved"])
 
@@ -1136,12 +1238,12 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                         st.markdown("---")
                         upload_db_img = st.file_uploader("📷 Wgraj zdjęcie referencyjne dla tych pozycji do bazy (opcjonalnie)", type=["jpg", "jpeg", "png"], key=f"img_up_{cur_no}")
 
-                        if st.button("💾 Zatwierdź Kody HS dla Urzędu Celnego i Zapisz do Bazy", type="primary"):
+                        if st.button("💾 Zatwierdź Kody HS dla Urzędu Celnego i Zapisz do Bazy (z SKU)", type="primary"):
                             records = edited_df.to_dict(orient="records")
                             proj["hs_approved"] = records
                             save_container_data(cur_comp, cur_no, proj)
-                            added = update_hs_database_from_records(records, upload_db_img)
-                            st.success(f"✅ Zatwierdzono! Dodano/zaktualizowano {added} wzorców w Wizualnej Bazie (wg 3 parametrów).")
+                            added = update_hs_database_from_records(records, upload_db_img, custom_status="Potwierdzony Celnie (Odprawiony)")
+                            st.success(f"✅ Zatwierdzono! Pomyślnie zaktualizowano **{added}** wzorców w Bazie z uwzględnieniem Numerów Katalogowych (SKU).")
                             st.rerun()
 
                         if proj.get("hs_approved"):
