@@ -32,7 +32,7 @@ def process_stage_2_dataframe(csv_text):
     col_map = {}
     for c in df.columns:
         c_low = c.strip().lower()
-        if "catalog" in c_low or "sku" in c_low or "artikel" in c_low:
+        if "catalog" in c_low or "sku" in c_low or "artikel" in c_low or "positions" in c_low:
             col_map[c] = "Invoice Positions"
         elif "name" in c_low or "produkt" in c_low or "towar" in c_low:
             col_map[c] = "Nazwa Produktu"
@@ -65,29 +65,29 @@ def process_stage_2_dataframe(csv_text):
     if "Waluta" not in df.columns:
         df["Waluta"] = "EUR"
         
-    # Czyszczenie i konwersja kolumn numerycznych przed grupowaniem
+    # Konwersja kolumn numerycznych
     for col in ["CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"]:
         df[col] = pd.to_numeric(df[col].astype(str).str.replace(",", ".").str.replace(r"[^\d.-]", "", regex=True), errors='coerce').fillna(0)
 
-    # Czyszczenie tekstowe kluczy grupowania
+    # Standaryzacja kluczy grupowania (Nazwa + Skład)
     df["Nazwa Produktu"] = df["Nazwa Produktu"].fillna("").astype(str).str.strip().str.upper()
     df["Skład Materiałowy"] = df["Skład Materiałowy"].fillna("").astype(str).str.strip().str.upper()
 
-    # --- KLUCZOWE: AGREGACJA I SUMOWANIE PO NAZWIE ORAZ SKŁADZIE ---
+    # Agregacja i sumowanie WYŁĄCZNIE po Nazwie i Składzie Materiałowym
     agg_dict = {
         "CTNS": "sum",
         "Quantity (pcs.)": "sum",
         "N.W KGS": "sum",
         "G.W KGS": "sum",
         "Amount (EUR)": "sum",
-        "Invoice Positions": lambda x: ", ".join(sorted(list(set(str(v) for v in x if pd.notna(v) and str(v).strip() not in ["", "nan", "None"])))) if any(pd.notna(v) for v in x) else "",
-        "HS CODE": lambda x: " / ".join(sorted(list(set(str(v) for v in x if pd.notna(v) and str(v).strip() not in ["", "nan", "None"])))) if any(pd.notna(v) for v in x) else "",
+        "Invoice Positions": lambda x: ", ".join(sorted(list(set(str(v).strip() for v in x if pd.notna(v) and str(v).strip() not in ["", "nan", "None"])))) if any(pd.notna(v) for v in x) else "",
+        "HS CODE": lambda x: " / ".join(sorted(list(set(str(v).strip() for v in x if pd.notna(v) and str(v).strip() not in ["", "nan", "None"])))) if any(pd.notna(v) for v in x) else "",
         "Waluta": "first"
     }
 
     df_grouped = df.groupby(["Nazwa Produktu", "Skład Materiałowy"], as_index=False).agg(agg_dict)
     
-    # Dodanie poprawnej numeracji pos
+    # Porządkowanie kolumn i numeracja
     df_grouped.insert(0, "pos", range(1, len(df_grouped) + 1))
     
     return df_grouped
