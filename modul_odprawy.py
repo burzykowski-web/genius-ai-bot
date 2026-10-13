@@ -91,6 +91,10 @@ def process_stage_2_dataframe(csv_text):
 
     df["Nazwa Produktu"] = df["Nazwa Produktu"].fillna("").astype(str).str.strip().str.upper()
     df["Skład Materiałowy"] = df["Skład Materiałowy"].fillna("").astype(str).str.strip().str.upper()
+    
+    # Zabezpieczenie przed pustymi numerami pozycji - jeśli brak, przypisujemy domyślny znacznik
+    df["Invoice Positions"] = df["Invoice Positions"].fillna("").astype(str).str.strip()
+    df.loc[df["Invoice Positions"] == "", "Invoice Positions"] = "N/D"
 
     agg_dict = {
         "CTNS": "sum",
@@ -98,7 +102,7 @@ def process_stage_2_dataframe(csv_text):
         "N.W KGS": "sum",
         "G.W KGS": "sum",
         "Amount (EUR)": "sum",
-        "Invoice Positions": lambda x: ", ".join(sorted(list(set(str(v).strip() for v in x if pd.notna(v) and str(v).strip() not in ["", "nan", "None"])))) if any(pd.notna(v) for v in x) else "",
+        "Invoice Positions": lambda x: ", ".join(sorted(list(set(str(v).strip() for v in x if pd.notna(v) and str(v).strip() not in ["", "nan", "None", "N/D"])))) if any(pd.notna(v) for v in x) else "N/D",
         "HS CODE": lambda x: " / ".join(sorted(list(set(str(v).strip() for v in x if pd.notna(v) and str(v).strip() not in ["", "nan", "None"])))) if any(pd.notna(v) for v in x) else "",
         "Waluta": "first"
     }
@@ -107,6 +111,9 @@ def process_stage_2_dataframe(csv_text):
         df_grouped = df.groupby(["Nazwa Produktu", "Skład Materiałowy"], as_index=False).agg(agg_dict)
     except Exception:
         df_grouped = df.copy()
+
+    # Upewnienie się, że puste pozycje dostaną czytelny zapis
+    df_grouped["Invoice Positions"] = df_grouped["Invoice Positions"].apply(lambda val: val if val and val != "N/D" else "Pozycje zbiorcze")
 
     for rc in default_cols:
         if rc not in df_grouped.columns and rc != "pos":
