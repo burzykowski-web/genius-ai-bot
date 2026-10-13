@@ -1054,18 +1054,19 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
 
         elif selected_tab == "🇩🇪 ⇄ 🇵🇱 Weryfikacja Krzyżowa Odprawy Niemieckiej (SKU)":
             st.subheader("🇩🇪 ⇄ 🇵🇱 Weryfikacja Krzyżowa: Niemiecka Odprawa Celna vs Dokumenty Handlowe")
-            st.caption("Wgraj osobno niemiecką odprawę celaną oraz dokumenty handlowe (CI/PL), aby system powiązał numery katalogowe (SKU) z kodami CN i zasilił bazę inteligentnej pamięci.")
+            st.caption("Wgraj osobno wiele niemieckich odpraw celnych oraz dokumentów handlowych (CI/PL), aby system powiązał numery katalogowe (SKU) z kodami CN i zasilił bazę inteligentnej pamięci.")
 
             col_de, col_pl = st.columns(2)
             with col_de:
                 uploaded_german_zoll = st.file_uploader(
                     "1. Niemiecka Odprawa Celna (ATLAS / PDF / Excel)",
                     type=["pdf", "xlsx", "xls", "png", "jpg", "jpeg"],
+                    accept_multiple_files=True,
                     key="german_zoll_file_tab"
                 )
             with col_pl:
                 uploaded_commercial_docs = st.file_uploader(
-                    "2. Faktura (CI) & Packing List (PL)",
+                    "2. Faktury (CI) & Packing Listy (PL)",
                     type=["pdf", "xlsx", "xls", "png", "jpg", "jpeg", "zip"],
                     accept_multiple_files=True,
                     key="commercial_docs_files_tab"
@@ -1078,7 +1079,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                     try:
                         client = genai.Client(api_key=api_key)
                         analysis_contents = [
-                            "Jesteś ekspertem celnym i systemem OCR. Przeanalizuj wgrane dokumenty: niemiecką odprawę celną oraz dokumenty handlowe (CI/PL).\n"
+                            "Jesteś ekspertem celnym i systemem OCR. Przeanalizuj wgrane dokumenty: niemieckie odprawy celne oraz dokumenty handlowe (CI/PL).\n"
                             "Zadanie: Wyciągnij pozycje towarowe, łącząc je w pary na podstawie Numeru Katalogowego (SKU / Artikel-Nr) oraz nazwy.\n"
                             "Dla każdej pozycji wyciągnij:\n"
                             "- Numer Katalogowy (SKU / Artikel-Nr)\n"
@@ -1090,17 +1091,18 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                         ]
                         
                         if uploaded_german_zoll:
-                            zoll_bytes = uploaded_german_zoll.getvalue()
-                            zoll_ext = uploaded_german_zoll.name.split(".")[-1].lower()
-                            analysis_contents.append(f"\n--- NIEMIECKA ODPRAWA CELNA ({uploaded_german_zoll.name}) ---\n")
-                            if zoll_ext in ["xlsx", "xls"]:
-                                analysis_contents.append(process_excel_all_sheets(zoll_bytes, uploaded_german_zoll.name))
-                            elif zoll_ext == "pdf":
-                                analysis_contents.append(types.Part.from_bytes(data=zoll_bytes, mime_type="application/pdf"))
-                            elif zoll_ext in ["jpg", "jpeg"]:
-                                analysis_contents.append(types.Part.from_bytes(data=zoll_bytes, mime_type="image/jpeg"))
-                            elif zoll_ext == "png":
-                                analysis_contents.append(types.Part.from_bytes(data=zoll_bytes, mime_type="application/png"))
+                            for z_file in uploaded_german_zoll:
+                                zoll_bytes = z_file.getvalue()
+                                zoll_ext = z_file.name.split(".")[-1].lower()
+                                analysis_contents.append(f"\n--- NIEMIECKA ODPRAWA CELNA ({z_file.name}) ---\n")
+                                if zoll_ext in ["xlsx", "xls"]:
+                                    analysis_contents.append(process_excel_all_sheets(zoll_bytes, z_file.name))
+                                elif zoll_ext == "pdf":
+                                    analysis_contents.append(types.Part.from_bytes(data=zoll_bytes, mime_type="application/pdf"))
+                                elif zoll_ext in ["jpg", "jpeg"]:
+                                    analysis_contents.append(types.Part.from_bytes(data=zoll_bytes, mime_type="image/jpeg"))
+                                elif zoll_ext == "png":
+                                    analysis_contents.append(types.Part.from_bytes(data=zoll_bytes, mime_type="application/png"))
 
                         if uploaded_commercial_docs:
                             for c_file in uploaded_commercial_docs:
@@ -1116,7 +1118,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                                 elif c_ext == "png":
                                     analysis_contents.append(types.Part.from_bytes(data=c_bytes, mime_type="application/png"))
 
-                        with st.spinner("Przetwarzanie weryfikacji krzyżowej i ekstrakcja SKU..."):
+                        with st.spinner("Przetwarzanie weryfikacji krzyżowej wielu plików i ekstrakcja SKU..."):
                             res_cross = safe_generate_content(client, selected_model, analysis_contents)
                             proj["cross_check_sku_result"] = res_cross.text
                             save_container_data(cur_comp, cur_no, proj)
