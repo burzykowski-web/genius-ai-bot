@@ -4,7 +4,7 @@ import re
 from io import StringIO
 
 def clean_numeric_value(val):
-    """Bezpiecznie konwertuje formaty liczbowe (europejskie i międzynarodowe) na float."""
+    """Bezpiecznie konwertuje formaty liczbowe na float."""
     if pd.isna(val):
         return 0.0
     s = str(val).strip()
@@ -27,7 +27,7 @@ def clean_numeric_value(val):
 
 def process_stage_2_dataframe(csv_text):
     if not csv_text or not isinstance(csv_text, str):
-        return pd.DataFrame(columns=["POS", "ART NO.", "DESCRIPTION", "MATERIAL", "HS CODES", "CTNS", "PCS", "N.W (KGS)", "G.W (KGS)", "TOTAL EUR"])
+        return pd.DataFrame(columns=["pos", "Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE", "CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)", "Waluta"])
     
     clean_lines = []
     for line in csv_text.split('\n'):
@@ -42,7 +42,7 @@ def process_stage_2_dataframe(csv_text):
         
     final_csv_str = "\n".join(clean_lines)
     if not final_csv_str:
-        return pd.DataFrame(columns=["POS", "ART NO.", "DESCRIPTION", "MATERIAL", "HS CODES", "CTNS", "PCS", "N.W (KGS)", "G.W (KGS)", "TOTAL EUR"])
+        return pd.DataFrame(columns=["pos", "Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE", "CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)", "Waluta"])
         
     try:
         df = pd.read_csv(StringIO(final_csv_str), sep=";", on_bad_lines='skip')
@@ -56,55 +56,61 @@ def process_stage_2_dataframe(csv_text):
     for c in df.columns:
         c_low = c.strip().lower()
         if "catalog" in c_low or "sku" in c_low or "artikel" in c_low or "positions" in c_low or "art" in c_low:
-            col_map[c] = "ART NO."
+            col_map[c] = "Invoice Positions"
         elif "name" in c_low or "produkt" in c_low or "towar" in c_low or "desc" in c_low:
-            col_map[c] = "DESCRIPTION"
+            col_map[c] = "Nazwa Produktu"
         elif "material" in c_low or "skład" in c_low:
-            col_map[c] = "MATERIAL"
+            col_map[c] = "Skład Materiałowy"
         elif "hs" in c_low or "taric" in c_low or "cn" in c_low or "code" in c_low:
-            col_map[c] = "HS CODES"
+            col_map[c] = "HS CODE"
         elif "ctns" in c_low or "karton" in c_low:
             col_map[c] = "CTNS"
         elif "quant" in c_low or "szt" in c_low or "pcs" in c_low:
-            col_map[c] = "PCS"
+            col_map[c] = "Quantity (pcs.)"
         elif "nw" in c_low or "netto" in c_low:
-            col_map[c] = "N.W (KGS)"
+            col_map[c] = "N.W KGS"
         elif "gw" in c_low or "brutto" in c_low:
-            col_map[c] = "G.W (KGS)"
+            col_map[c] = "G.W KGS"
         elif "amount" in c_low or "wart" in c_low or "price" in c_low or "total" in c_low:
-            col_map[c] = "TOTAL EUR"
+            col_map[c] = "Amount (EUR)"
+        elif "waluta" in c_low or "curr" in c_low:
+            col_map[c] = "Waluta"
             
     df = df.rename(columns=col_map)
     
-    req_cols = ["ART NO.", "DESCRIPTION", "MATERIAL", "HS CODES", "CTNS", "PCS", "N.W (KGS)", "G.W (KGS)", "TOTAL EUR"]
+    req_cols = ["Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE", "CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"]
     for rc in req_cols:
         if rc not in df.columns:
-            df[rc] = 0.0 if rc in ["CTNS", "PCS", "N.W (KGS)", "G.W (KGS)", "TOTAL EUR"] else ""
+            df[rc] = 0.0 if rc in ["CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"] else ""
             
+    if "Waluta" not in df.columns:
+        df["Waluta"] = "EUR"
+        
     # Konwersja kolumn numerycznych
-    for col in ["CTNS", "PCS", "N.W (KGS)", "G.W (KGS)", "TOTAL EUR"]:
+    for col in ["CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"]:
         df[col] = df[col].apply(clean_numeric_value)
 
-    # Standaryzacja kluczy grupowania (DESCRIPTION + MATERIAL)
-    df["DESCRIPTION"] = df["DESCRIPTION"].fillna("").astype(str).str.strip().str.upper()
-    df["MATERIAL"] = df["MATERIAL"].fillna("").astype(str).str.strip().str.upper()
+    # Standaryzacja kluczy grupowania
+    df["Nazwa Produktu"] = df["Nazwa Produktu"].fillna("").astype(str).str.strip().str.upper()
+    df["Skład Materiałowy"] = df["Skład Materiałowy"].fillna("").astype(str).str.strip().str.upper()
 
-    # --- KLUCZOWE AGREGOWANIE WYŁĄCZNIE PO OPISIE ORAZ MATERIALE ---
+    # Agregacja i sumowanie po Nazwie oraz Składzie Materiałowym
     agg_dict = {
         "CTNS": "sum",
-        "PCS": "sum",
-        "N.W (KGS)": "sum",
-        "G.W (KGS)": "sum",
-        "TOTAL EUR": "sum",
-        "ART NO.": lambda x: ", ".join(sorted(list(set(str(v).strip() for v in x if pd.notna(v) and str(v).strip() not in ["", "nan", "None"])))) if any(pd.notna(v) for v in x) else "",
-        "HS CODES": lambda x: " / ".join(sorted(list(set(str(v).strip() for v in x if pd.notna(v) and str(v).strip() not in ["", "nan", "None"])))) if any(pd.notna(v) for v in x) else ""
+        "Quantity (pcs.)": "sum",
+        "N.W KGS": "sum",
+        "G.W KGS": "sum",
+        "Amount (EUR)": "sum",
+        "Invoice Positions": lambda x: ", ".join(sorted(list(set(str(v).strip() for v in x if pd.notna(v) and str(v).strip() not in ["", "nan", "None"])))) if any(pd.notna(v) for v in x) else "",
+        "HS CODE": lambda x: " / ".join(sorted(list(set(str(v).strip() for v in x if pd.notna(v) and str(v).strip() not in ["", "nan", "None"])))) if any(pd.notna(v) for v in x) else "",
+        "Waluta": "first"
     }
 
-    df_grouped = df.groupby(["DESCRIPTION", "MATERIAL"], as_index=False).agg(agg_dict)
+    df_grouped = df.groupby(["Nazwa Produktu", "Skład Materiałowy"], as_index=False).agg(agg_dict)
     
-    # Uporządkowanie kolumn i dodanie numeracji POS na samym początku
-    df_grouped = df_grouped[["ART NO.", "DESCRIPTION", "MATERIAL", "HS CODES", "CTNS", "PCS", "N.W (KGS)", "G.W (KGS)", "TOTAL EUR"]]
-    df_grouped.insert(0, "POS", range(1, len(df_grouped) + 1))
+    # Porządkowanie kolumn zgodnie z oczekiwaniami app.py
+    df_grouped = df_grouped[["Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE", "CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)", "Waluta"]]
+    df_grouped.insert(0, "pos", range(1, len(df_grouped) + 1))
     
     return df_grouped
 
