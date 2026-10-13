@@ -149,6 +149,18 @@ def save_uploaded_files(company_name, container_no, uploaded_files):
             st.error(f"Błąd zapisu pliku {f.name}: {str(e)}")
     return saved_docs
 
+def safe_generate_content(client, model_name, contents, max_retries=3, initial_delay=2):
+    for attempt in range(max_retries):
+        try:
+            return client.models.generate_content(model=model_name, contents=contents)
+        except Exception as e:
+            err_str = str(e)
+            if "503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str.lower():
+                if attempt < max_retries - 1:
+                    time.sleep(initial_delay * (attempt + 1))
+                    continue
+            raise e
+
 def translate_text_google(text):
     if not text or not TRANSLATOR_AVAILABLE:
         return text
@@ -398,7 +410,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                                 analysis_contents.append(types.Part.from_bytes(data=c_bytes, mime_type="image/jpeg"))
 
                         with st.spinner("Przetwarzanie weryfikacji krzyżowej i ekstrakcja SKU..."):
-                            res_cross = genai.Client(api_key=api_key).models.generate_content(model=selected_model, contents=analysis_contents)
+                            res_cross = safe_generate_content(client, selected_model, analysis_contents)
                             raw_text = res_cross.text.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
                             
                             from io import StringIO
