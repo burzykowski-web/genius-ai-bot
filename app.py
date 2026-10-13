@@ -1134,4 +1134,23 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                         edited_df = st.data_editor(df_editor_init, use_container_width=True, hide_index=True, num_rows="dynamic", key=f"editor_{cur_no}")
 
                         st.markdown("---")
-                        upload_db_img = st.file_uploader("📷 Wgraj zdjęcie referencyjne dla tych pozycji do bazy (opcjonalnie)", type=["jpg", "jpeg", "png"],
+                        upload_db_img = st.file_uploader("📷 Wgraj zdjęcie referencyjne dla tych pozycji do bazy (opcjonalnie)", type=["jpg", "jpeg", "png"], key=f"img_up_{cur_no}")
+
+                        if st.button("💾 Zatwierdź Kody HS dla Urzędu Celnego i Zapisz do Bazy", type="primary"):
+                            records = edited_df.to_dict(orient="records")
+                            proj["hs_approved"] = records
+                            save_container_data(cur_comp, cur_no, proj)
+                            added = update_hs_database_from_records(records, upload_db_img)
+                            st.success(f"✅ Zatwierdzono! Dodano/zaktualizowano {added} wzorców w Wizualnej Bazie (wg 3 parametrów).")
+                            st.rerun()
+
+                        if proj.get("hs_approved"):
+                            st.markdown("---")
+                            st.success("🔒 **Dokumentacja gotowa do PUESC / Huzar**")
+                            df_approved = pd.DataFrame(proj["hs_approved"])
+                            out_final_excel = BytesIO()
+                            with pd.ExcelWriter(out_final_excel, engine='openpyxl') as writer:
+                                df_approved.to_excel(writer, index=False, sheet_name='HS_CODE_APPROVED')
+                            st.download_button("🏛️ Pobierz Zgodę Celną Excel (.xlsx)", data=out_final_excel.getvalue(), file_name=f"HS_APPROVED_{cur_comp}_{cur_no}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Błąd parsowania taryfikacji: {str(e)}")
