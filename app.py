@@ -228,18 +228,24 @@ def process_excel_all_sheets_to_csv_rows(f_bytes, filename="plik.xls"):
     return all_rows if all_rows else [f"Dane z pliku {filename}"]
 
 def call_ai_chunked_stage2_massive(client, model_name, base_prompt, rows_list):
-    chunk_size = 150
+    chunk_size = 800
     chunks = [rows_list[i:i + chunk_size] for i in range(0, len(rows_list), chunk_size)]
     
     combined_csv_rows = []
     header_str = "POS;Catalog_No;Product_Name;Material;HS_CODE;CTNS;Quantity;NW_KGS;GW_KGS;Amount;Waluta"
     combined_csv_rows.append(header_str)
     
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
     for idx, chunk in enumerate(chunks):
+        status_text.text(f"Przetwarzanie paczki {idx+1} z {len(chunks)} (wiersze {idx*chunk_size} - {min((idx+1)*chunk_size, len(rows_list))})...")
+        progress_bar.progress((idx + 1) / len(chunks))
+        
         chunk_text = "\n".join(chunk)
         chunk_prompt = (
             f"{base_prompt}\n"
-            f"(Paczka {idx+1} z {len(chunks)}. Zwróć wynik jako format CSV ze średnikami bez nagłówka)."
+            f"(Paczka {idx+1} z {len(chunks)}. Przeanalizuj dokładnie i zwróć wynik jako format CSV ze średnikami bez nagłówka)."
         )
         try:
             res = safe_generate_content(client, model_name, [chunk_prompt, chunk_text])
@@ -250,6 +256,8 @@ def call_ai_chunked_stage2_massive(client, model_name, base_prompt, rows_list):
         except Exception:
             pass
             
+    status_text.text("✅ Zakończono masowe przetwarzanie!")
+    progress_bar.empty()
     return "\n".join(combined_csv_rows)
 
 def call_ai_chunked_stage3(client, model_name, summary_df):
