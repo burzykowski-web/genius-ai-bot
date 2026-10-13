@@ -617,7 +617,9 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                     else:
                         st.warning("⚠️ Otrzymano puste dane z analizy pliku Excel.")
                 except Exception as e:
+                    import traceback
                     st.error(f"Błąd wyświetlania tabeli: {str(e)}")
+                    st.text(traceback.format_exc())
 
         elif selected_tab == "🏷️ 3. Taryfikacja & Weryfikacja Agenta":
             st.subheader("🏷️ Etap 3: Taryfikacja (Pamięć po Nazwie i Składzie + AI)")
