@@ -42,4 +42,32 @@ def update_hs_database_from_records(records, uploaded_img=None, custom_status="P
 
     for r in records:
         sku = str(r.get("Numer_Katalogowy", r.get("Numer Katalogowy", ""))).strip()
-        p_name = str(r.get("
+        p_name = str(r.get("Nazwa_Produktu", r.get("Nazwa Produktu", ""))).strip()
+        mat = str(r.get("Sklad_Materialowy", r.get("Skład Materiałowy", ""))).strip()
+        taric = str(r.get("Ostateczny_Kod_TARIC", r.get("Ostateczny Kod TARIC", r.get("TARIC_PROPOSED", "")))).strip()
+        cn_desc = str(r.get("Oficjalny Opis CN", "")).strip()
+        opt_trans = str(r.get("Opcjonalne Tłumaczenie", "")).strip()
+        
+        if not taric or taric == "nan":
+            continue
+            
+        if sku and sku.lower() not in ["", "n/d", "nan", "none"]:
+            key = f"sku_{sku.lower()}"
+        else:
+            key = f"{p_name}_{mat}_{taric}".lower()
+            
+        db[key] = {
+            "catalog_number": sku,
+            "product_name": p_name,
+            "material": mat,
+            "taric": taric,
+            "cn_description": cn_desc,
+            "optional_translation": opt_trans,
+            "image": img_filename if img_filename else db.get(key, {}).get("image", ""),
+            "status_celny": custom_status,
+            "data_aktualizacji": datetime.now().strftime("%d.%m.%Y")
+        }
+        added_count += 1
+        
+    save_hs_database(db)
+    return added_count
