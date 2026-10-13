@@ -14,8 +14,8 @@ from google.genai import types
 # Importy modułów
 from modul_odprawy import generate_formal_pdf_report, process_stage_2_dataframe, parse_stage_3_csv
 from modul_intrastat import process_intrastat_dataframe, generate_huzarfaktury_xml
-from modul_baza_hs import load_hs_database, save_hs_database
-from modul_baza_hs import update_hs_database_from_records
+from modul_baza_hs import load_hs_database, save_hs_database, update_hs_database_from_records
+from modul_cbam import generate_cbam_pdf_report
 
 try:
     from deep_translator import GoogleTranslator
@@ -148,6 +148,15 @@ def save_uploaded_files(company_name, container_no, uploaded_files):
         except Exception as e:
             st.error(f"Błąd zapisu pliku {f.name}: {str(e)}")
     return saved_docs
+
+def translate_text_google(text):
+    if not text or not TRANSLATOR_AVAILABLE:
+        return text
+    try:
+        translated = GoogleTranslator(source='auto', target='pl').translate(str(text))
+        return translated if translated else text
+    except Exception:
+        return text
 
 def process_excel_all_sheets(f_bytes, filename="plik.xls"):
     try:
