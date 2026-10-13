@@ -62,15 +62,35 @@ def process_stage_2_dataframe(csv_text):
         if rc not in df.columns:
             df[rc] = 0 if "KGS" in rc or rc in ["CTNS", "Quantity (pcs.)", "Amount (EUR)"] else ""
             
-    if "pos" not in df.columns:
-        df.insert(0, "pos", range(1, len(df) + 1))
     if "Waluta" not in df.columns:
         df["Waluta"] = "EUR"
         
+    # Czyszczenie i konwersja kolumn numerycznych przed grupowaniem
     for col in ["CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"]:
         df[col] = pd.to_numeric(df[col].astype(str).str.replace(",", ".").str.replace(r"[^\d.-]", "", regex=True), errors='coerce').fillna(0)
-        
-    return df
+
+    # Czyszczenie tekstowe kluczy grupowania
+    df["Nazwa Produktu"] = df["Nazwa Produktu"].fillna("").astype(str).str.strip().str.upper()
+    df["Skład Materiałowy"] = df["Skład Materiałowy"].fillna("").astype(str).str.strip().str.upper()
+
+    # --- KLUCZOWE: AGREGACJA I SUMOWANIE PO NAZWIE ORAZ SKŁADZIE ---
+    agg_dict = {
+        "CTNS": "sum",
+        "Quantity (pcs.)": "sum",
+        "N.W KGS": "sum",
+        "G.W KGS": "sum",
+        "Amount (EUR)": "sum",
+        "Invoice Positions": lambda x: ", ".join(sorted(list(set(str(v) for v in x if pd.notna(v) and str(v).strip() not in ["", "nan", "None"])))) if any(pd.notna(v) for v in x) else "",
+        "HS CODE": lambda x: " / ".join(sorted(list(set(str(v) for v in x if pd.notna(v) and str(v).strip() not in ["", "nan", "None"])))) if any(pd.notna(v) for v in x) else "",
+        "Waluta": "first"
+    }
+
+    df_grouped = df.groupby(["Nazwa Produktu", "Skład Materiałowy"], as_index=False).agg(agg_dict)
+    
+    # Dodanie poprawnej numeracji pos
+    df_grouped.insert(0, "pos", range(1, len(df_grouped) + 1))
+    
+    return df_grouped
 
 def parse_stage_3_csv(csv_text):
     if not csv_text:
@@ -94,7 +114,6 @@ def generate_formal_pdf_report(container_no, report_text):
         safe_line = line.encode('latin-1', 'replace').decode('latin-1')
         pdf.multi_cell(0, 8, txt=safe_line)
     
-    # Bezpieczne pobranie wyjściowych bajtów z fpdf2
     output = pdf.output()
     if isinstance(output, str):
         return output.encode('latin-1', 'replace')
