@@ -2,55 +2,66 @@
 """
 Moduł 3: Wizualna Baza Kodów HS
 """
-import pandas as pd
 import os
+import json
+import time
 
-def process_baza_hs_module(search_query="", database_path="main.xls"):
-    """
-    Wyszukuje kody HS/TARIC, materiały oraz opisy w zintegrowanej bazie celnej.
-    """
-    try:
-        if not os.path.exists(database_path):
-            return {
-                "status": "ERROR",
-                "message": f"Brak pliku bazy danych {database_path}."
+DATA_DIR = "projects_data"
+DB_FILE = os.path.join(DATA_DIR, "hs_database_v3.json")
+IMG_DB_DIR = os.path.join(DATA_DIR, "db_images")
+
+def load_hs_database():
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except Exception:
+            pass
+    return {}
+
+def save_hs_database(db):
+    if not os.path.exists(DATA_DIR):
+        os.makedirs(DATA_DIR)
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(db, f, ensure_ascii=False, indent=2)
+
+def update_hs_database_from_records(records, image_file=None):
+    if not os.path.exists(IMG_DB_DIR):
+        os.makedirs(IMG_DB_DIR)
+    db = load_hs_database()
+    updated_count = 0
+    img_name = ""
+    if image_file:
+        try:
+            img_bytes = image_file.getvalue()
+            if img_bytes:
+                img_name = f"prod_{int(time.time())}_{image_file.name}"
+                img_path = os.path.join(IMG_DB_DIR, img_name)
+                with open(img_path, "wb") as out:
+                    out.write(img_bytes)
+        except Exception:
+            pass
+
+    for r in records:
+        prod_name = str(r.get("Nazwa Produktu", "")).strip()
+        material = str(r.get("Skład Materiałowy", "")).strip()
+        taric = str(r.get("Ostateczny Kod TARIC", r.get("TARIC_PROPOSED", ""))).strip()
+        cn_desc = str(r.get("Oficjalny Opis CN", "")).strip()
+        opt_trans = str(r.get("Opcjonalne Tłumaczenie", "")).strip()
+        
+        if prod_name and taric and taric != "nan":
+            key = f"{prod_name}_{material}_{taric}".lower()
+            db[key] = {
+                "product_name": prod_name,
+                "material": material,
+                "taric": taric,
+                "cn_description": cn_desc,
+                "optional_translation": opt_trans,
+                "image": img_name or r.get("Zdjęcie wzorca", "")
             }
-
-        xl = pd.ExcelFile(database_path)
-        df = xl.parse(xl.sheet_names[0])
-    except Exception as e:
-        return {
-            "status": "ERROR",
-            "message": f"Błąd odczytu bazy kodów HS: {str(e)}"
-        }
-
-    df.columns = [str(c).strip() for c in df.columns]
-    
-    # Identyfikacja kolumn opisu i kodu
-    desc_col = next((c for c in df.columns if 'desc' in c.lower() or 'nazwa' in c.lower()), df.columns[0])
-    hs_col = next((c for c in df.columns if 'hs' in c.lower() or 'taric' in c.lower()), df.columns[2] if len(df.columns) > 2 else df.columns[1])
-    mat_col = next((c for c in df.columns if 'mat' in c.lower()), df.columns[1] if len(df.columns) > 1 else desc_col)
-
-    # Filtrowanie po zapytaniu użytkownika
-    if search_query:
-        query = str(search_query).lower()
-        mask = df[desc_col].astype(str).str.lower().str.contains(query) | df[hs_col].astype(str).str.lower().str.contains(query)
-        df_filtered = df[mask]
-    else:
-        df_filtered = df.head(100) # Domyślnie pierwszych 100 wpisów
-
-    results = []
-    for _, row in df_filtered.iterrows():
-        results.append({
-            "hs_code": str(row[hs_col]),
-            "description": str(row[desc_col]),
-            "material": str(row[mat_col])
-        })
-
-    return {
-        "status": "OK",
-        "module": "Wizualna Baza Kodów HS",
-        "query": search_query,
-        "results_count": len(results),
-        "results": results
-    }
+            updated_count += 1
+    if updated_count > 0:
+        save_hs_database(db)
+    return updated_count
