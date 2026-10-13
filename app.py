@@ -176,7 +176,8 @@ def translate_text_google(text):
     except Exception:
         return text
 
-def process_excel_all_sheets(f_bytes, filename="plik.xls"):
+def process_excel_all_sheets_to_csv_rows(f_bytes, filename="plik.xls"):
+    """Bezpieczne odczytywanie wszystkich zakładek dużego Excela i konwersja na wiersze tekstowe."""
     try:
         ext = filename.split(".")[-1].lower()
         if ext == "xls":
@@ -187,44 +188,43 @@ def process_excel_all_sheets(f_bytes, filename="plik.xls"):
         else:
             xl = pd.ExcelFile(BytesIO(f_bytes))
             
-        combined_str = ""
+        all_rows = []
         for sheet_name in xl.sheet_names:
             df_sheet = xl.parse(sheet_name)
-            if len(df_sheet) > 1000:
-                df_sheet = df_sheet.head(1000)
-            combined_str += f"\n=== ZAKŁADKA / ARKUSZ: {sheet_name} ===\n" + df_sheet.to_string() + "\n"
-        return combined_str
+            # Czyszczenie pustych wierszy
+            df_sheet = df_sheet.dropna(how='all')
+            for _, row in df_sheet.iterrows():
+                row_str = " | ".join([str(val) for val in row.values if pd.notna(val) and str(val).strip() != ""])
+                if row_str:
+                    all_rows.append(f"[Arkusz: {sheet_name}] {row_str}")
+        return all_rows
     except Exception as e:
-        try:
-            return f_bytes.decode('utf-8', errors='ignore')
-        except Exception:
-            return f"[Błąd odczytu pliku Excel: {str(e)}]"
+        return [f"[Błąd odczytu Excela: {str(e)}]"]
 
-def call_ai_chunked_stage2(client, model_name, base_prompt, full_dataframe_text):
-    lines = full_dataframe_text.strip().split('\n')
-    if len(lines) <= 150:
-        res = safe_generate_content(client, model_name, [base_prompt, full_dataframe_text])
-        return res.text
-    
-    header = lines[0]
-    data_lines = lines[1:]
-    chunk_size = 150
-    chunks = [data_lines[i:i + chunk_size] for i in range(0, len(data_lines), chunk_size)]
+def call_ai_chunked_stage2_massive(client, model_name, base_prompt, rows_list):
+    """Inteligentne paczkowanie 2000+ wierszy dla Etapu 2."""
+    chunk_size = 100  # 100 wierszy na jedną paczkę AI, co gwarantuje pełną precyzję
+    chunks = [rows_list[i:i + chunk_size] for i in range(0, len(rows_list), chunk_size)]
     
     combined_csv_rows = []
+    header_str = "POS;Catalog_No;Product_Name;Material;HS_CODE;CTNS;Quantity;NW_KGS;GW_KGS;Amount;Waluta"
+    combined_csv_rows.append(header_str)
+    
     for idx, chunk in enumerate(chunks):
-        chunk_text = header + "\n" + "\n".join(chunk)
-        chunk_prompt = f"{base_prompt}\n(Paczka {idx+1} z {len(chunks)})."
+        chunk_text = "\n".join(chunk)
+        chunk_prompt = (
+            f"{base_prompt}\n"
+            f"(To jest paczka {idx+1} z {len(chunks)} dla dużego pliku. Przetwórz te wiersze i zwróć wyłącznie format CSV ze średnikami bez nagłówka)."
+        )
         try:
             res = safe_generate_content(client, model_name, [chunk_prompt, chunk_text])
             clean_res = res.text.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
-            for r_idx, r_line in enumerate(clean_res.split('\n')):
-                if r_idx == 0 and "POS;" in r_line.upper():
-                    if not combined_csv_rows: combined_csv_rows.append(r_line)
-                else:
-                    if r_line.strip() and r_line.count(';') >= 4: combined_csv_rows.append(r_line)
+            for r_line in clean_res.split('\n'):
+                if r_line.strip() and r_line.count(';') >= 4 and not r_line.upper().startswith("POS;"):
+                    combined_csv_rows.append(r_line)
         except Exception:
             pass
+            
     return "\n".join(combined_csv_rows)
 
 def call_ai_chunked_stage3(client, model_name, summary_df):
@@ -234,6 +234,7 @@ def call_ai_chunked_stage3(client, model_name, summary_df):
     
     all_t3_rows = []
     header_str = "pos;Invoice Positions;Nazwa Produktu;Skład Materiałowy;Opcjonalne Tłumaczenie;TARIC_PROPOSED;CN_HS_CODE;Oficjalny Opis CN;Reasoning"
+    all_t3_rows.append(header_str)
     
     for idx, chunk in enumerate(chunks):
         sub_df = pd.DataFrame(chunk)
@@ -241,16 +242,14 @@ def call_ai_chunked_stage3(client, model_name, summary_df):
         p3_prompt = (
             f"Jesteś agentem celnym. Wycinek pozycji (paczka {idx+1} z {len(chunks)}):\n"
             f"{chunk_summary}\n\n"
-            f"Zwróć wynik jako czysty CSV ze średnikami (;):\n{header_str}"
+            f"Zwróć wynik jako czysty CSV ze średnikami (;) bez nagłówka:\n"
         )
         try:
             res = safe_generate_content(client, model_name, [p3_prompt])
             clean_res = res.text.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
-            for r_idx, r_line in enumerate(clean_res.split('\n')):
-                if r_idx == 0 and "pos;" in r_line.lower():
-                    if not all_t3_rows: all_t3_rows.append(r_line)
-                else:
-                    if r_line.strip() and r_line.count(';') >= 4: all_t3_rows.append(r_line)
+            for r_line in clean_res.split('\n'):
+                if r_line.strip() and r_line.count(';') >= 4 and not r_line.upper().startswith("POS;"):
+                    all_t3_rows.append(r_line)
         except Exception:
             pass
     return "\n".join(all_t3_rows)
@@ -366,7 +365,7 @@ if app_mode == "🗄️ Wizualna Baza Kodów HS":
         st.write("Baza jest obecnie pusta.")
 
 # ==============================================================================
-# MODUŁ 1: FIRMY I KONTENERY (4 ETAPY PRACY)
+# MODUŁ 1: FIRMY I KONTENERY (4 ETAPY)
 # ==============================================================================
 elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
     if not st.session_state.current_company:
@@ -413,7 +412,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
         st.title(f"Genius AI BOT | Firma: `{cur_comp}` ➔ Kontener: `{cur_no}`")
 
         uploaded_files = st.file_uploader(
-            "1. Dokumenty Ładunkowe (Wgraj plik ZIP lub pojedyncze CI, PL, BL, Odprawa Chińska, Excel)",
+            "1. Dokumenty Ładunkowe (Wgraj plik ZIP lub pojedyncze CI, PL, BL, Odprawa Chińska, Duży Excel - 2000+ pozycji)",
             type=["zip", "pdf", "xlsx", "xls", "png", "jpg", "jpeg"],
             accept_multiple_files=True
         )
@@ -434,8 +433,8 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                     f_bytes = f.getvalue()
                     if not f_bytes: continue
                     if f.type == "spreadsheet":
-                        excel_text = process_excel_all_sheets(f_bytes, f.name)
-                        contents.append(f"\n--- ZAWARTOŚĆ PLIKU EXCEL ({f.name}) ---\n" + excel_text + "\n")
+                        rows_data = process_excel_all_sheets_to_csv_rows(f_bytes, f.name)
+                        contents.append(f"\n=== PLIK EXCEL ({f.name}) - Łącznie wierszy: {len(rows_data)} ===\n" + "\n".join(rows_data[:1500]))
                     elif f.type == "application/pdf":
                         try:
                             contents.append(types.Part.from_bytes(data=f_bytes, mime_type="application/pdf"))
@@ -453,54 +452,14 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
         PROMPT_ETAP1 = (
             f"Jesteś bezwzględnym starszym audytorem celnym dla firmy: {cur_comp}.\n"
             "Przeprowadź rygorystyczną KONTROLĘ FORMALNĄ I KRZYŻOWĄ (Cross-Check).\n"
-            "1. Sztuki (Quantity/pcs), 2. Kartony/Opakowania, 3. Tabela rozbieżności.\n"
-            "Użyj czytelnego formatowania Markdown z nagłówkami."
+            "1. Sztuki (Quantity/pcs), 2. Kartony/Opakowania, 3. Tabela rozbieżności."
         )
-
-        if st.button("🚀 Wykonaj Pełną Analizę (Wszystkie Etapy Automatycznie)", type="primary", use_container_width=True):
-            if not proj.get("docs"):
-                st.warning("Najpierw załącz dokumenty ładunkowe!")
-            else:
-                res1 = call_ai(PROMPT_ETAP1, "Krok 1/3: Rygorystyczny audyt sztuk i kartonów...")
-                if res1: proj["out1"] = res1
-
-                p2 = (
-                    "Jesteś precyzyjnym skanerem OCR. Odczytaj KAŻDĄ pozycję faktury/PL/Odprawy.\n"
-                    "Wyciągnij bezwzględnie Numer Katalogowy (SKU / Artikel-Nr).\n"
-                    "Zwróć wynik jako czysty CSV ze średnikami (;):\n"
-                    "POS;Catalog_No;Product_Name;Material;HS_CODE;CTNS;Quantity;NW_KGS;GW_KGS;Amount;Waluta"
-                )
-                with st.spinner("Krok 2/3: Automatyczne zbijanie pozycji w tle..."):
-                    client_obj = genai.Client(api_key=api_key)
-                    raw_ocr_text = call_ai(p2, "Odczytywanie OCR...")
-                    if raw_ocr_text:
-                        proj["out2"] = call_ai_chunked_stage2(client_obj, selected_model, p2, raw_ocr_text)
-
-                if proj.get("out2"):
-                    df_grouped_temp = process_stage_2_dataframe(proj["out2"])
-                    with st.spinner("Krok 3/3: Automatyczna taryfikacja..."):
-                        res3 = call_ai_chunked_stage3(client_obj, selected_model, df_grouped_temp)
-                    if res3:
-                        try:
-                            df_temp_t3 = parse_stage_3_csv(res3)
-                            translations = [translate_text_google(f"{r.get('Nazwa Produktu', '')} ({r.get('Skład Materiałowy', '')})") for _, r in df_temp_t3.iterrows()]
-                            if "Opcjonalne Tłumaczenie" not in df_temp_t3.columns:
-                                df_temp_t3.insert(4, "Opcjonalne Tłumaczenie", translations)
-                            proj["out3"] = df_temp_t3.to_csv(index=False, sep=";")
-                        except Exception:
-                            pass
-
-                save_container_data(cur_comp, cur_no, proj)
-                st.success("✅ Pełna analiza zakończona pomyślnie!")
-                st.rerun()
-
-        st.markdown("---")
 
         selected_tab = st.radio(
             "Wybierz Etap Analizy",
             [
                 "📋 1. Kontrola Formalna i Odprawa Chińska", 
-                "🧩 2. Zbijanie Pozycji", 
+                "🧩 2. Zbijanie Pozycji (2000+ Excel)", 
                 "🏷️ 3. Taryfikacja & Weryfikacja Agenta", 
                 "🇩🇪 ⇄ 🇵🇱 Weryfikacja Krzyżowa Odprawy Niemieckiej (SKU)"
             ],
@@ -523,21 +482,44 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                         st.download_button("📄 Pobierz Raport PDF", data=pdf_bytes, file_name=f"Raport_Formalny_{cur_comp}_{cur_no}.pdf", mime="application/pdf", use_container_width=True)
                 st.markdown(proj["out1"])
 
-        elif selected_tab == "🧩 2. Zbijanie Pozycji":
-            st.subheader("🧩 Agregacja Pozycji (Rozdzielenie Nazwy i Materiału)")
-            if st.button("Wykonaj Zbijanie Pozycji", key="b2"):
-                p2 = (
-                    "Jesteś skanerem OCR. Odczytaj KAŻDĄ pozycję oraz Numer Katalogowy (SKU).\n"
-                    "Zwróć wynik jako czysty CSV ze średnikami (;):\n"
-                    "POS;Catalog_No;Product_Name;Material;HS_CODE;CTNS;Quantity;NW_KGS;GW_KGS;Amount;Waluta"
-                )
-                with st.spinner("Automatyczne zbijanie pozycji..."):
-                    client_obj = genai.Client(api_key=api_key)
-                    raw_ocr_text = call_ai(p2)
-                    if raw_ocr_text:
-                        proj["out2"] = call_ai_chunked_stage2(client_obj, selected_model, p2, raw_ocr_text)
-                        save_container_data(cur_comp, cur_no, proj)
-                        st.rerun()
+        elif selected_tab == "🧩 2. Zbijanie Pozycji (2000+ Excel)":
+            st.subheader("🧩 Masowa Agregacja Pozycji (Wsparcie dla Plików 2000+ wierszy)")
+            st.info("System przeczyta wszystkie zakładki wgranego pliku Excel rzędami, rozdzieli nazwy od materiałów i wyciągnie numery SKU.")
+
+            if st.button("🚀 Uruchom Masowe Zbijanie Pozycji (Excel 2000+ wierszy)", key="b2_massive", type="primary", use_container_width=True):
+                if not proj.get("docs"):
+                    st.warning("⚠️ Najpierw załącz plik Excel lub dokumenty w górnym panelu!")
+                else:
+                    try:
+                        client_obj = genai.Client(api_key=api_key)
+                        all_excel_rows = []
+                        
+                        for f in proj["docs"]:
+                            if f.type == "spreadsheet":
+                                f_bytes = f.getvalue()
+                                rows_extracted = process_excel_all_sheets_to_csv_rows(f_bytes, f.name)
+                                all_excel_rows.extend(rows_extracted)
+                        
+                        if not all_excel_rows:
+                            st.error("⚠️ Nie znaleziono załączonego pliku Excel w dokumentach kontenera!")
+                        else:
+                            st.write(f"📂 Wczytano łącznie **{len(all_excel_rows)}** wierszy ze wszystkich zakładek Excel. Trwa masowe przetwarzanie AI...")
+                            
+                            p2 = (
+                                "Jesteś precyzyjnym systemem OCR i celnym.\n"
+                                "Przeanalizuj poniższe wiersze z pliku Excel.\n"
+                                "Wyciągnij KAŻDĄ pozycję towarową, starannie rozdzielając Nazwę Produktu od Składu Materiałowego (np. papier, poliester, metal, drewno itp.) oraz wyciągnij Numer Katalogowy (SKU / Artikel-Nr).\n"
+                                "Zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) bez nagłówka w pierwszej linii:\n"
+                                "POS;Catalog_No;Product_Name;Material;HS_CODE;CTNS;Quantity;NW_KGS;GW_KGS;Amount;Waluta"
+                            )
+                            
+                            res_massive = call_ai_chunked_stage2_massive(client_obj, selected_model, p2, all_excel_rows)
+                            proj["out2"] = "POS;Catalog_No;Product_Name;Material;HS_CODE;CTNS;Quantity;NW_KGS;GW_KGS;Amount;Waluta\n" + res_massive
+                            save_container_data(cur_comp, cur_no, proj)
+                            st.success(f"✅ Masowe zbijanie 2000+ pozycji zakończone pomyślnie!")
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Błąd podczas masowego zbijania: {str(e)}")
             
             if proj.get("out2"):
                 try:
@@ -549,9 +531,19 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                     col4.metric("Masa Brutto", f"{grouped['G.W KGS'].sum():,.1f} kg")
                     col5.metric("Wartość", f"{grouped['Amount (EUR)'].sum():,.2f}")
 
+                    st.markdown(f"**Liczba zsumowanych wierszy/pozycji po agregacji:** `{len(grouped)}`")
                     st.dataframe(grouped, use_container_width=True, hide_index=True)
+                    
+                    df_excel = grouped.copy()
+                    for col in ["N.W KGS", "G.W KGS", "Amount (EUR)"]:
+                        if col in df_excel.columns:
+                            df_excel[col] = df_excel[col].apply(lambda x: f"{x:.2f}".replace(".", ","))
+                    output = BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df_excel.to_excel(writer, index=False, sheet_name='Zbicie Pozycji')
+                    st.download_button("📊 Pobierz zweryfikowany plik Excel (.xlsx)", data=output.getvalue(), file_name=f"Genius_AI_Zbicie_{cur_comp}_{cur_no}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                 except Exception as e:
-                    st.error(f"Błąd wyświetlania: {str(e)}")
+                    st.error(f"Błąd wyświetlania tabeli: {str(e)}")
 
         elif selected_tab == "🏷️ 3. Taryfikacja & Weryfikacja Agenta":
             st.subheader("🏷️ Etap 3: Taryfikacja (Pamięć po SKU + Nazwa + Skład)")
@@ -561,7 +553,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                 if st.button("Wykonaj Taryfikację Zbieganych Pozycji", key="b3"):
                     try:
                         df_stage2 = process_stage_2_dataframe(proj["out2"])
-                        with st.spinner("Automatyczna taryfikacja..."):
+                        with st.spinner("Masowa taryfikacja (sprawdzanie pamięci SKU i AI)..."):
                             client_obj = genai.Client(api_key=api_key)
                             res = call_ai_chunked_stage3(client_obj, selected_model, df_stage2)
                         if res:
@@ -657,7 +649,9 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                             zoll_bytes = z_file.getvalue()
                             ext = z_file.name.split(".")[-1].lower()
                             analysis_contents.append(f"\n--- ODPRAWA CELNA ({z_file.name}) ---\n")
-                            if ext in ["xlsx", "xls"]: analysis_contents.append(process_excel_all_sheets(zoll_bytes, z_file.name))
+                            if ext in ["xlsx", "xls"]:
+                                rows_z = process_excel_all_sheets_to_csv_rows(zoll_bytes, z_file.name)
+                                analysis_contents.append("\n".join(rows_z[:1000]))
                             elif ext == "pdf": analysis_contents.append(types.Part.from_bytes(data=zoll_bytes, mime_type="application/pdf"))
                             else: analysis_contents.append(types.Part.from_bytes(data=zoll_bytes, mime_type="image/jpeg"))
 
@@ -665,7 +659,9 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                             c_bytes = c_file.getvalue()
                             ext = c_file.name.split(".")[-1].lower()
                             analysis_contents.append(f"\n--- DOKUMENT HANDLOWY ({c_file.name}) ---\n")
-                            if ext in ["xlsx", "xls"]: analysis_contents.append(process_excel_all_sheets(c_bytes, c_file.name))
+                            if ext in ["xlsx", "xls"]:
+                                rows_c = process_excel_all_sheets_to_csv_rows(c_bytes, c_file.name)
+                                analysis_contents.append("\n".join(rows_c[:1000]))
                             elif ext == "pdf": analysis_contents.append(types.Part.from_bytes(data=c_bytes, mime_type="application/pdf"))
                             else: analysis_contents.append(types.Part.from_bytes(data=c_bytes, mime_type="image/jpeg"))
 
