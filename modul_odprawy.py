@@ -12,8 +12,7 @@ def process_stage_2_dataframe(csv_text):
         if not line_s:
             continue
         upper_l = line_s.upper()
-        # Pomijanie nagłówków systemowych lub śmieciowych powtórzeń nagłówka
-        if "CATALOG_NO" in upper_l or "PRODUCT_NAME" in upper_l or upper_l.startswith("POS;CATALOG") or "PRODUCT_NAME" in line_s:
+        if "CATALOG_NO" in upper_l or "PRODUCT_NAME" in upper_l or upper_l.startswith("POS;CATALOG"):
             if "PRODUCT_NAME" in line_s and "Material" in line_s:
                 continue
         clean_lines.append(line_s)
@@ -30,7 +29,6 @@ def process_stage_2_dataframe(csv_text):
         except Exception:
             return pd.DataFrame()
             
-    # Normalizacja kolumn
     col_map = {}
     for c in df.columns:
         c_low = c.strip().lower()
@@ -59,7 +57,6 @@ def process_stage_2_dataframe(csv_text):
             
     df = df.rename(columns=col_map)
     
-    # Upewnienie się, że wymagane kolumny istnieją
     req_cols = ["Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE", "CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"]
     for rc in req_cols:
         if rc not in df.columns:
@@ -70,7 +67,6 @@ def process_stage_2_dataframe(csv_text):
     if "Waluta" not in df.columns:
         df["Waluta"] = "EUR"
         
-    # Konwersja typów liczbowych
     for col in ["CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"]:
         df[col] = pd.to_numeric(df[col].astype(str).str.replace(",", ".").str.replace(r"[^\d.-]", "", regex=True), errors='coerce').fillna(0)
         
@@ -97,4 +93,9 @@ def generate_formal_pdf_report(container_no, report_text):
     for line in report_text.split('\n'):
         safe_line = line.encode('latin-1', 'replace').decode('latin-1')
         pdf.multi_cell(0, 8, txt=safe_line)
-    return bytes(pdf.output())
+    
+    # Bezpieczne pobranie wyjściowych bajtów z fpdf2
+    output = pdf.output()
+    if isinstance(output, str):
+        return output.encode('latin-1', 'replace')
+    return bytes(output)
