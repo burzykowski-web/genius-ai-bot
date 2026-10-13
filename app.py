@@ -71,29 +71,32 @@ def load_companies_and_containers():
     data_struct = {}
     if not os.path.exists(DATA_DIR):
         return data_struct
-    for company_name in os.listdir(DATA_DIR):
-        comp_dir = os.path.join(DATA_DIR, company_name)
-        if os.path.isdir(comp_dir) and company_name != "db_images":
-            data_struct[company_name] = {}
-            for container_no in os.listdir(comp_dir):
-                cont_dir = os.path.join(comp_dir, container_no)
-                if os.path.isdir(cont_dir):
-                    json_path = os.path.join(cont_dir, "data.json")
-                    c_data = {"out1": "", "out2": "", "out3": "", "calc_audit": "", "docs": [], "hs_approved": [], "cross_check_df": []}
-                    if os.path.exists(json_path):
-                        try:
-                            with open(json_path, "r", encoding="utf-8") as f:
-                                c_data.update(json.load(f))
-                        except Exception:
-                            pass
-                    docs_dir = os.path.join(cont_dir, "docs")
-                    if os.path.exists(docs_dir):
-                        for fname in os.listdir(docs_dir):
-                            fpath = os.path.join(docs_dir, fname)
-                            sf = StoredFile(fpath, fname)
-                            if sf.type != "unsupported":
-                                c_data["docs"].append(sf)
-                    data_struct[company_name][container_no] = c_data
+    try:
+        for company_name in os.listdir(DATA_DIR):
+            comp_dir = os.path.join(DATA_DIR, company_name)
+            if os.path.isdir(comp_dir) and company_name != "db_images":
+                data_struct[company_name] = {}
+                for container_no in os.listdir(comp_dir):
+                    cont_dir = os.path.join(comp_dir, container_no)
+                    if os.path.isdir(cont_dir):
+                        json_path = os.path.join(cont_dir, "data.json")
+                        c_data = {"out1": "", "out2": "", "out3": "", "calc_audit": "", "docs": [], "hs_approved": [], "cross_check_df": []}
+                        if os.path.exists(json_path):
+                            try:
+                                with open(json_path, "r", encoding="utf-8") as f:
+                                    c_data.update(json.load(f))
+                            except Exception:
+                                pass
+                        docs_dir = os.path.join(cont_dir, "docs")
+                        if os.path.exists(docs_dir):
+                            for fname in os.listdir(docs_dir):
+                                fpath = os.path.join(docs_dir, fname)
+                                sf = StoredFile(fpath, fname)
+                                if sf.type != "unsupported":
+                                    c_data["docs"].append(sf)
+                        data_struct[company_name][container_no] = c_data
+    except Exception:
+        pass
     return data_struct
 
 def save_container_data(company_name, container_no, data):
@@ -110,8 +113,11 @@ def save_container_data(company_name, container_no, data):
         "cross_check_sku_result": data.get("cross_check_sku_result", ""),
         "cross_check_df": data.get("cross_check_df", [])
     }
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(save_data, f, ensure_ascii=False, indent=2)
+    try:
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(save_data, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 def save_uploaded_files(company_name, container_no, uploaded_files):
     cont_dir = os.path.join(DATA_DIR, company_name, container_no)
@@ -152,7 +158,10 @@ def delete_container_dir(company_name, container_no):
     import shutil
     cont_dir = os.path.join(DATA_DIR, company_name, container_no)
     if os.path.exists(cont_dir):
-        shutil.rmtree(cont_dir)
+        try:
+            shutil.rmtree(cont_dir)
+        except Exception:
+            pass
 
 def safe_generate_content(client, model_name, contents, max_retries=3, initial_delay=2):
     for attempt in range(max_retries):
@@ -176,7 +185,6 @@ def translate_text_google(text):
         return text
 
 def process_excel_all_sheets_to_csv_rows(f_bytes, filename="plik.xls"):
-    """Niezawodny parser pliku – odczytuje wszystkie arkusze i wiersze bez generowania błędów."""
     all_rows = []
     try:
         ext = filename.split(".")[-1].lower()
@@ -271,9 +279,22 @@ def call_ai_chunked_stage3(client, model_name, summary_df):
             pass
     return "\n".join(all_t3_rows)
 
-# --- SIDEBAR & STEROWANIE ---
+# --- INICJALIZACJA STANU Z DYSKU (TRWAŁOŚĆ DANYCH) ---
 if "company_data" not in st.session_state:
     st.session_state.company_data = load_companies_and_containers()
+
+# Zawsze sprawdzaj i synchronizuj stan z dysku, aby nic nie ginęło
+disk_data = load_companies_and_containers()
+if disk_data and not st.session_state.company_data:
+    st.session_state.company_data = disk_data
+elif disk_data and st.session_state.company_data:
+    for comp, conts in disk_data.items():
+        if comp not in st.session_state.company_data:
+            st.session_state.company_data[comp] = conts
+        else:
+            for cont, c_val in conts.items():
+                if cont not in st.session_state.company_data[comp]:
+                    st.session_state.company_data[comp][cont] = c_val
 
 if "current_company" not in st.session_state:
     if st.session_state.company_data:
@@ -282,8 +303,9 @@ if "current_company" not in st.session_state:
         st.session_state.current_company = None
 
 if "current_container" not in st.session_state:
-    if st.session_state.current_company and st.session_state.company_data[st.session_state.current_company]:
-        st.session_state.current_container = list(st.session_state.company_data[st.session_state.current_company].keys())[0]
+    if st.session_state.current_company and st.session_state.current_company in st.session_state.company_data:
+        conts = list(st.session_state.company_data[st.session_state.current_company].keys())
+        st.session_state.current_container = conts[0] if conts else None
     else:
         st.session_state.current_container = None
 
@@ -299,6 +321,7 @@ if st.sidebar.button("+ Dodaj Firmę", use_container_width=True):
             st.session_state.company_data[new_comp] = {}
         st.session_state.current_company = new_comp
         st.session_state.current_container = None
+        save_container_data(new_comp, "DUMMY", {}) # Tworzy strukturę dyskową
         st.sidebar.success(f"Aktywowano firmę: {new_comp}")
         st.rerun()
 
@@ -378,14 +401,6 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
         proj = st.session_state.company_data[cur_comp][cur_no]
 
         st.title(f"Genius AI BOT | Firma: `{cur_comp}` ➔ Kontener: `{cur_no}`")
-
-        if st.button("🧹 Wyczyść pamięć i pliki tego kontenera (Reset błędu)", type="secondary"):
-            proj["docs"] = []
-            proj["out2"] = ""
-            delete_container_dir(cur_comp, cur_no)
-            save_container_data(cur_comp, cur_no, proj)
-            st.success("Zresetowano kontener. Wgraj teraz poprawny plik Excel od nowa.")
-            st.rerun()
 
         uploaded_files = st.file_uploader(
             "1. Dokumenty Ładunkowe (Wgraj plik ZIP lub pojedyncze CI, PL, BL, Odprawa Chińska, Duży Excel - 2000+ pozycji)",
