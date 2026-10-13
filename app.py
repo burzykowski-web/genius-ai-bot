@@ -152,7 +152,7 @@ def delete_container_dir(company_name, container_no):
     if os.path.exists(cont_dir):
         shutil.rmtree(cont_dir)
 
-def safe_generate_content(client, model_name, contents, max_retries=3, initial_delay=3):
+def safe_generate_content(client, model_name, contents, max_retries=3, initial_delay=2):
     for attempt in range(max_retries):
         try:
             return client.models.generate_content(model=model_name, contents=contents)
@@ -451,60 +451,6 @@ class CBAMCustomPDF(FPDF):
         self.set_text_color(113, 128, 150)
         self.cell(0, 8, f'Strona {self.page_no()} | Genius Logistics Sp. z o.o.', align='C')
 
-def generate_formal_pdf_report(container_no, markdown_content):
-    if not FPDF_AVAILABLE: return None
-    pdf = CustomPDF()
-    pdf.set_margins(12, 12, 12)
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.set_fill_color(235, 248, 255)
-    pdf.set_draw_color(49, 130, 206)
-    pdf.rect(12, 26, 186, 10, style='DF')
-    pdf.set_xy(14, 28)
-    pdf.set_font('Helvetica', 'B', 9)
-    pdf.set_text_color(44, 82, 130)
-    clean_meta = f'KONTENER: {container_no} | STATUS: AUDYT ZAKONCZONY'
-    pdf.cell(0, 6, clean_meta.encode('latin-1', 'replace').decode('latin-1'), ln=1)
-    pdf.ln(6)
-    lines = markdown_content.split('\n')
-    for line in lines:
-        clean_line = line.strip()
-        if not clean_line:
-            pdf.ln(2)
-            continue
-        clean_line = re.sub(r'[^\x00-\x7F\xC0-\xFF]', '', clean_line).strip()
-        if not clean_line: continue
-        if clean_line.startswith('###'):
-            pdf.ln(3)
-            pdf.set_font('Helvetica', 'B', 10)
-            pdf.set_text_color(44, 82, 130)
-            txt = clean_line.replace('###', '').strip().encode('latin-1', 'replace').decode('latin-1')
-            pdf.multi_cell(186, 5, txt)
-            pdf.ln(1)
-            pdf.set_font('Helvetica', '', 9)
-            pdf.set_text_color(45, 55, 72)
-        elif clean_line.startswith('-') or clean_line.startswith('*'):
-            pdf.set_font('Helvetica', '', 9)
-            pdf.set_text_color(45, 55, 72)
-            text = clean_line[1:].strip()
-            text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
-            txt = f' - {text}'.encode('latin-1', 'replace').decode('latin-1')
-            pdf.multi_cell(186, 4.5, txt)
-        else:
-            pdf.set_font('Helvetica', '', 9)
-            pdf.set_text_color(45, 55, 72)
-            text = re.sub(r'\*\*(.*?)\*\*', r'\1', clean_line)
-            txt = text.encode('latin-1', 'replace').decode('latin-1')
-            pdf.multi_cell(186, 4.5, txt)
-    
-    try:
-        pdf_output = pdf.output(dest='S')
-        if isinstance(pdf_output, str):
-            return pdf_output.encode('latin-1', 'replace')
-        return pdf_output
-    except Exception:
-        return bytes(pdf.output())
-
 def generate_cbam_pdf_report(company_name, markdown_content):
     if not FPDF_AVAILABLE: return None
     try:
@@ -518,7 +464,7 @@ def generate_cbam_pdf_report(company_name, markdown_content):
         pdf.set_xy(14, 28)
         pdf.set_font('Helvetica', 'B', 9)
         pdf.set_text_color(44, 82, 130)
-        clean_meta = f'FIRMA: {company_name} | RAPORT SPRAWOZDAWCZY CBAM'
+        clean_meta = f'FIRMA: {company_name} | RAPORT SPRAWOZDAWCZY CBAM (WAGI NETTO)'
         pdf.cell(0, 6, clean_meta.encode('latin-1', 'replace').decode('latin-1'), ln=1)
         pdf.ln(6)
         
@@ -557,76 +503,6 @@ def generate_cbam_pdf_report(company_name, markdown_content):
         return bytes(pdf_bytes)
     except Exception:
         return None
-
-def call_ai_chunked_stage2(client, model_name, base_prompt, full_dataframe_text):
-    lines = full_dataframe_text.strip().split('\n')
-    if len(lines) <= 150:
-        res = safe_generate_content(client, model_name, [base_prompt, full_dataframe_text])
-        return res.text
-    
-    header = lines[0]
-    data_lines = lines[1:]
-    chunk_size = 150
-    chunks = [data_lines[i:i + chunk_size] for i in range(0, len(data_lines), chunk_size)]
-    
-    combined_csv_rows = []
-    for idx, chunk in enumerate(chunks):
-        chunk_text = header + "\n" + "\n".join(chunk)
-        chunk_prompt = (
-            f"{base_prompt}\n"
-            f"(UWAGA: To jest paczka {idx+1} z {len(chunks)}. Przetwórz wyłącznie poniższe wiersze i zwróć dane w formacie CSV z nagłówkiem)."
-        )
-        try:
-            res = safe_generate_content(client, model_name, [chunk_prompt, chunk_text])
-            clean_res = res.text.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
-            res_lines = clean_res.split('\n')
-            for r_idx, r_line in enumerate(res_lines):
-                if r_idx == 0 and ("POS;" in r_line or "pos;" in r_line):
-                    if not combined_csv_rows:
-                        combined_csv_rows.append(r_line)
-                else:
-                    if r_line.strip() and r_line.count(';') >= 4:
-                        combined_csv_rows.append(r_line)
-        except Exception as e:
-            st.warning(f"Ostrzeżenie przy paczce {idx+1}: {str(e)}")
-            
-    return "\n".join(combined_csv_rows)
-
-def call_ai_chunked_stage3(client, model_name, summary_df):
-    records = summary_df.to_dict(orient="records")
-    chunk_size = 100
-    chunks = [records[i:i + chunk_size] for i in range(0, len(records), chunk_size)]
-    
-    all_t3_rows = []
-    header_str = "pos;Invoice Positions;Nazwa Produktu;Skład Materiałowy;Opcjonalne Tłumaczenie;TARIC_PROPOSED;CN_HS_CODE;Oficjalny Opis CN;Reasoning"
-    
-    for idx, chunk in enumerate(chunks):
-        sub_df = pd.DataFrame(chunk)
-        chunk_summary = sub_df[["pos", "Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE"]].to_csv(index=False, sep=";")
-        p3_prompt = (
-            "Jesteś agentem celnym w Genius Logistics. Oto wycinek ZBITYCH pozycji towarowych (paczka "
-            f"{idx+1} z {len(chunks)}):\n"
-            f"{chunk_summary}\n\n"
-            "Przeanalizuj i dokonaj taryfikacji WYŁĄCZNIE dla powyższych pozycji.\n"
-            "ZACHOWAJ ORYGINALNĄ Nazwę Produktu oraz Skład Materiałowy w osobnych kolumnach.\n"
-            "Zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) i kropką jako separatorem dziesiętnym w pierwszej linii:\n"
-            f"{header_str}"
-        )
-        try:
-            res = safe_generate_content(client, model_name, [p3_prompt])
-            clean_res = res.text.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
-            res_lines = clean_res.split('\n')
-            for r_idx, r_line in enumerate(res_lines):
-                if r_idx == 0 and "pos;" in r_line:
-                    if not all_t3_rows:
-                        all_t3_rows.append(r_line)
-                else:
-                    if r_line.strip() and r_line.count(';') >= 4:
-                        all_t3_rows.append(r_line)
-        except Exception as e:
-            st.warning(f"Ostrzeżenie taryfikacji w paczce {idx+1}: {str(e)}")
-            
-    return "\n".join(all_t3_rows)
 
 # --- SIDEBAR & STEROWANIE ---
 if "company_data" not in st.session_state:
@@ -680,252 +556,192 @@ app_mode = st.sidebar.radio(
         "🚢 Odprawy i Taryfikacja Kontenerów", 
         "📦 Dedykowany Generator INTRASTAT (Huzar)", 
         "🗄️ Wizualna Baza Kodów HS",
-        "🇪🇺 Moduł CBAM (Kalkulator Emisji)"
+        "🇪🇺 Moduł CBAM (Kalkulator Wag Netto)"
     ]
 )
 st.sidebar.markdown("---")
 
 # ==============================================================================
-# MODUŁ 4: CBAM (KALKULATOR WAG I EMISJI)
+# MODUŁ 4: CBAM (SZYBKI KALKULATOR WAG NETTO)
 # ==============================================================================
-if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Emisji)":
-    st.title("🇪🇺 Moduł CBAM — Unijny Mechanizm Dostosowywania Cen na Granicach")
-    st.caption("Ekstrakcja wyłącznie wag netto z europejskich dokumentów i odpraw celnych (PDF/XLS) oraz twarde sumowanie matematyczne.")
+if app_mode == "🇪🇺 Moduł CBAM (Kalkulator Wag Netto)":
+    st.title("🇪🇺 Szybki Moduł CBAM — Deterministyczne Sumowanie Wag Netto")
+    st.caption("Błyskawiczna ekstrakcja wyłącznie wag netto (Netto-Masse / Eigenmasse / N.W) z plików PDF, XLS i odpraw ATLAS z wielowątkowością.")
 
     if not st.session_state.current_company:
         st.warning("⚠️ Najpierw dodaj i wybierz firmę w panelu bocznym!")
     else:
         st.info(f"📂 **Aktywna Firma w module CBAM:** `{st.session_state.current_company}`")
 
-    cbam_tab = st.radio(
-        "Wybierz Etap CBAM",
-        ["📊 Etap 1: Kalkulator z Taryfikacji i Wag (Na bazie Kontenera)", "🔍 Etap 2: Niezależny Audyt z Własnych Dokumentów i Odprawy"],
-        horizontal=True
+    if "cbam_independent_docs" not in st.session_state:
+        st.session_state.cbam_independent_docs = []
+
+    uploaded_cbam_indep = st.file_uploader(
+        "Wgraj dokumenty (PDF / Excel / ZIP / Odprawy ATLAS)",
+        type=["zip", "pdf", "xlsx", "xls", "png", "jpg", "jpeg"],
+        accept_multiple_files=True,
+        key="cbam_indep_files"
     )
-    st.markdown("---")
 
-    if cbam_tab == "📊 Etap 1: Kalkulator z Taryfikacji i Wag (Na bazie Kontenera)":
-        st.subheader("📊 Etap 1: Przesiew i Kalkulacja Wagi CBAM z Zatwierdzonego Kontenera")
-        st.info("Ten etap korzysta z zatwierdzonych kodów HS oraz mas z aktywnego kontenera wybranej firmy.")
-
-        if not st.session_state.current_company or not st.session_state.company_data.get(st.session_state.current_company):
-            st.warning("⚠️ Wybrana firma nie posiada kontenerów!")
-        else:
-            cur_comp = st.session_state.current_company
-            containers_in_comp = list(st.session_state.company_data[cur_comp].keys())
-            selected_cbam_cont = st.selectbox("Wybierz kontener dla firmy do analizy CBAM", options=containers_in_comp)
-            
-            proj_data = st.session_state.company_data[cur_comp][selected_cbam_cont]
-            
-            if not proj_data.get("hs_approved"):
-                st.warning(f"⚠️ Brak zatwierdzonych kodów HS dla kontenera `{selected_cbam_cont}` w firmie `{cur_comp}`. Przejdź do modułu kontenerów i zatwierdź kody w Etapie 3.")
-            else:
-                df_approved = pd.DataFrame(proj_data["hs_approved"])
-                st.markdown(f"**Firma:** `{cur_comp}` | **Kontener:** `{selected_cbam_cont}` | Liczba pozycji zatwierdzonych: `{len(df_approved)}`")
-
-                if st.button("⚡ Uruchom Analizę i Kalkulację Wagi CBAM (Etap 1)", type="primary"):
-                    client = genai.Client(api_key=api_key)
-                    recs = df_approved.to_dict(orient="records")
-                    prompt_cbam_e1 = (
-                        "Jesteś ekspertem ds. CBAM w unijnej agencji celnej.\n"
-                        "Oto zatwierdzone pozycje towarowe dla kontenera:\n"
-                        f"{json.dumps(recs, ensure_ascii=False, indent=2)}\n\n"
-                        "Przeanalizuj każdy kod TARIC / HS pod kątem unijnego rozporządzenia CBAM (stal, żelazo, aluminium, nawozy, wodór, energia elektryczna).\n"
-                        "Dla każdej pozycji określ czy podlega pod CBAM (TAK / NIE), podaj kategorię CBAM oraz oszacuj masę netto podlegającą pod dyrektywę.\n"
-                        "Zwróć wynik w przejrzystej tabeli Markdown z kolumnami: [Nazwa Produktu | Kod TARIC | Masa Netto (kg) | Czy CBAM? | Kategoria CBAM | Uwagi]."
-                    )
-                    with st.spinner("Analiza kodów i wyliczanie wag CBAM..."):
-                        res_cbam1 = safe_generate_content(client, selected_model, prompt_cbam_e1)
-                        proj_data["cbam_data"] = res_cbam1.text
-                        save_container_data(cur_comp, selected_cbam_cont, proj_data)
-                        st.success("✅ Analiza Etapu 1 zakończona pomyślnie!")
-                        st.rerun()
-
-                if proj_data.get("cbam_data"):
-                    st.markdown("### 📋 Wynik Analizy CBAM (Etap 1)")
-                    st.markdown(proj_data["cbam_data"])
-                    st.markdown("---")
-                    if FPDF_AVAILABLE:
-                        cbam_pdf_bytes = generate_cbam_pdf_report(cur_comp, proj_data["cbam_data"])
-                        st.download_button("📄 Pobierz Raport CBAM (Etap 1) w formacie PDF", data=cbam_pdf_bytes, file_name=f"Raport_CBAM_Etap1_{cur_comp}_{selected_cbam_cont}.pdf", mime="application/pdf", use_container_width=True)
-
-    else:
-        st.subheader("🔍 Etap 2: Deterministyczny Audyt Wag Netto z Dokumentów Europejskich i Odpraw ATLAS")
-        st.info(f"Wgraj niemieckie odprawy celne ATLAS, pliki PDF lub arkusze Excel dla firmy: **{st.session_state.current_company}**. System wyciągnie **WYŁĄCZNIE masy netto** i zsumuje je matematycznie w Pythonie.")
-
-        if "cbam_independent_docs" not in st.session_state:
-            st.session_state.cbam_independent_docs = []
-
-        uploaded_cbam_indep = st.file_uploader(
-            "Wgraj pliki do niezależnej analizy CBAM (PDF / Excel / ZIP / Odprawy ATLAS)",
-            type=["zip", "pdf", "xlsx", "xls", "png", "jpg", "jpeg"],
-            accept_multiple_files=True,
-            key="cbam_indep_files"
-        )
-
-        if uploaded_cbam_indep:
-            saved_indep = []
-            for f in uploaded_cbam_indep:
-                try:
-                    f_bytes = f.getvalue()
-                    if not f_bytes: continue
-                    if f.name.lower().endswith(".zip"):
-                        with zipfile.ZipFile(BytesIO(f_bytes)) as z:
-                            for filename in z.namelist():
-                                if filename.endswith('/') or '__MACOSX' in filename or filename.startswith('.'):
-                                    continue
-                                file_data = z.read(filename)
-                                base_name = os.path.basename(filename)
-                                if not base_name: continue
-                                class ZipWrapper:
-                                    def __init__(self, name, data):
-                                        self.name = name
-                                        self._data = data
-                                    def getvalue(self):
-                                        return self._data
-                                saved_indep.append(ZipWrapper(base_name, file_data))
-                    else:
-                        saved_indep.append(f)
-                except Exception as e:
-                    st.error(f"Błąd pliku {f.name}: {str(e)}")
-            st.session_state.cbam_independent_docs = saved_indep
-            st.success(f"✅ Wgrano i załączono {len(saved_indep)} plików dla firmy {st.session_state.current_company}.")
-
-        if st.session_state.cbam_independent_docs:
-            st.write(f"📂 **Załączone pliki ({len(st.session_state.cbam_independent_docs)} szt.):** " + ", ".join([d.name for d in st.session_state.cbam_independent_docs[:10]]) + ("..." if len(st.session_state.cbam_independent_docs) > 10 else ""))
-
-            if st.button("🚀 Uruchom Ekstrakcję i Deterministyczne Sumowanie Wag Netto", type="primary", use_container_width=True):
-                if not st.session_state.current_company:
-                    st.error("Wybierz najpierw firmę w panelu bocznym.")
+    if uploaded_cbam_indep:
+        saved_indep = []
+        for f in uploaded_cbam_indep:
+            try:
+                f_bytes = f.getvalue()
+                if not f_bytes: continue
+                if f.name.lower().endswith(".zip"):
+                    with zipfile.ZipFile(BytesIO(f_bytes)) as z:
+                        for filename in z.namelist():
+                            if filename.endswith('/') or '__MACOSX' in filename or filename.startswith('.'):
+                                continue
+                            file_data = z.read(filename)
+                            base_name = os.path.basename(filename)
+                            if not base_name: continue
+                            class ZipWrapper:
+                                def __init__(self, name, data):
+                                    self.name = name
+                                    self._data = data
+                                def getvalue(self):
+                                    return self._data
+                            saved_indep.append(ZipWrapper(base_name, file_data))
                 else:
-                    try:
-                        client = genai.Client(api_key=api_key)
-                        extracted_csv_lines = ["Nazwa_Produktu;Kod_TARIC;Masa_Netto_KG;Czy_CBAM;Kategoria_CBAM"]
-                        
-                        docs_list = st.session_state.cbam_independent_docs
-                        total_files = len(docs_list)
-                        batch_size = 3  # mniejsze paczki dla stabilności i uniknięcia błędów API
-                        
-                        progress_bar = st.progress(0)
-                        status_text = st.empty()
-                        
-                        def process_single_file(f_item):
-                            try:
-                                f_bytes = f_item.getvalue()
-                                if not f_bytes: return []
-                                ext = f_item.name.split(".")[-1].lower()
-                                
-                                strict_net_weight_prompt = (
-                                    f"Jesteś ścisłym systemem parsowania dokumentów celnych dla pliku {f_item.name}.\n"
-                                    "SZUKAJ WYŁĄCZNIE WAG NETTO (np. Netto-Masse, Eigenmasse, Masa netto, NW).\n"
-                                    "Zignoruj masy brutto (Rohmasse, Gross weight) oraz ilości sztuk.\n"
-                                    "Zwróć WYŁĄCZNIE wiersze w formacie CSV ze średnikami (;) (bez nagłówka, bez markdown):\n"
-                                    "Nazwa_Produktu;Kod_TARIC;Masa_Netto_KG;Czy_CBAM_TAK_NIE;Kategoria_CBAM"
-                                )
-                                
-                                doc_parts = [strict_net_weight_prompt]
-                                if ext in ["xlsx", "xls"]:
-                                    excel_text = process_excel_all_sheets(f_bytes, f_item.name)
-                                    doc_parts.append(excel_text)
-                                elif ext == "pdf":
-                                    doc_parts.append(types.Part.from_bytes(data=f_bytes, mime_type="application/pdf"))
-                                elif ext in ["jpg", "jpeg"]:
-                                    doc_parts.append(types.Part.from_bytes(data=f_bytes, mime_type="image/jpeg"))
-                                elif ext == "png":
-                                    doc_parts.append(types.Part.from_bytes(data=f_bytes, mime_type="application/png"))
-                                    
-                                res_file = safe_generate_content(client, selected_model, doc_parts)
-                                if res_file and res_file.text:
-                                    lines = []
-                                    for ln in res_file.text.strip().split('\n'):
-                                        ln_clean = ln.replace("```csv", "").replace("```", "").strip()
-                                        if ln_clean.count(';') >= 3 and not "Nazwa_Produktu" in ln_clean:
-                                            lines.append(ln_clean)
-                                    return lines
-                            except Exception:
-                                pass
-                            return []
+                    saved_indep.append(f)
+            except Exception as e:
+                st.error(f"Błąd pliku {f.name}: {str(e)}")
+        st.session_state.cbam_independent_docs = saved_indep
+        st.success(f"✅ Załączono {len(saved_indep)} plików do błyskawicznego audytu.")
 
-                        completed_count = 0
-                        for i in range(0, total_files, batch_size):
-                            batch = docs_list[i:i + batch_size]
-                            status_text.text(f"Ekstrakcja wag netto: pliki {i+1} do {min(i+batch_size, total_files)} z {total_files}...")
-                            
-                            with ThreadPoolExecutor(max_workers=2) as executor:
-                                future_to_file = {executor.submit(process_single_file, f): f for f in batch}
-                                for future in as_completed(future_to_file):
-                                    completed_count += 1
-                                    progress_bar.progress(completed_count / total_files)
-                                    res_lines = future.result()
-                                    if res_lines:
-                                        extracted_csv_lines.extend(res_lines)
-                            time.sleep(1.5)
+    if st.session_state.cbam_independent_docs:
+        st.write(f"📂 **Pliki w kolejce ({len(st.session_state.cbam_independent_docs)} szt.):** " + ", ".join([d.name for d in st.session_state.cbam_independent_docs[:10]]) + ("..." if len(st.session_state.cbam_independent_docs) > 10 else ""))
 
-                        status_text.text("Matematyczne sumowanie wag netto w Pythonie...")
-                        
-                        csv_data_string = "\n".join(extracted_csv_lines)
+        if st.button("🚀 Uruchom Błyskawiczną Ekstrakcję i Sumowanie Wag Netto", type="primary", use_container_width=True):
+            if not st.session_state.current_company:
+                st.error("Wybierz najpierw firmę w panelu bocznym.")
+            else:
+                try:
+                    client = genai.Client(api_key=api_key)
+                    extracted_csv_lines = ["Nazwa_Produktu;Kod_TARIC;Masa_Netto_KG;Czy_CBAM;Kategoria_CBAM"]
+                    
+                    docs_list = st.session_state.cbam_independent_docs
+                    total_files = len(docs_list)
+                    batch_size = 5  # zoptymalizowana paczka dla szybkiego wykonania
+                    
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    def process_single_file_fast(f_item):
                         try:
-                            df_parsed = pd.read_csv(StringIO(csv_data_string), sep=";", on_bad_lines='skip')
+                            f_bytes = f_item.getvalue()
+                            if not f_bytes: return []
+                            ext = f_item.name.split(".")[-1].lower()
+                            
+                            fast_prompt = (
+                                f"Wyciągnij WYŁĄCZNIE masy netto (Netto-Masse, Eigenmasse, Masa netto, NW) z pliku {f_item.name}.\n"
+                                "Ignoruj masy brutto. Zwróć tylko wiersze w formacie CSV ze średnikami (;):\n"
+                                "Nazwa_Produktu;Kod_TARIC;Masa_Netto_KG;Czy_CBAM_TAK_NIE;Kategoria_CBAM"
+                            )
+                            
+                            doc_parts = [fast_prompt]
+                            if ext in ["xlsx", "xls"]:
+                                doc_parts.append(process_excel_all_sheets(f_bytes, f_item.name))
+                            elif ext == "pdf":
+                                doc_parts.append(types.Part.from_bytes(data=f_bytes, mime_type="application/pdf"))
+                            elif ext in ["jpg", "jpeg"]:
+                                doc_parts.append(types.Part.from_bytes(data=f_bytes, mime_type="image/jpeg"))
+                            elif ext == "png":
+                                doc_parts.append(types.Part.from_bytes(data=f_bytes, mime_type="application/png"))
+                                
+                            res_file = safe_generate_content(client, selected_model, doc_parts)
+                            if res_file and res_file.text:
+                                lines = []
+                                for ln in res_file.text.strip().split('\n'):
+                                    ln_clean = ln.replace("```csv", "").replace("```", "").strip()
+                                    if ln_clean.count(';') >= 3 and not "Nazwa_Produktu" in ln_clean:
+                                        lines.append(ln_clean)
+                                return lines
                         except Exception:
-                            df_parsed = pd.DataFrame(columns=["Nazwa_Produktu", "Kod_TARIC", "Masa_Netto_KG", "Czy_CBAM", "Kategoria_CBAM"])
+                            pass
+                        return []
 
-                        if "Masa_Netto_KG" in df_parsed.columns:
-                            df_parsed["Masa_Netto_KG"] = df_parsed["Masa_Netto_KG"].astype(str).str.replace(" ", "").str.replace(",", ".").str.extract(r"(\d+\.?\d*)")[0].astype(float).fillna(0)
-                        else:
-                            df_parsed["Masa_Netto_KG"] = 0.0
-
-                        if "Czy_CBAM" not in df_parsed.columns:
-                            df_parsed["Czy_CBAM"] = "TAK"
-
-                        df_cbam_filtered = df_parsed[df_parsed["Czy_CBAM"].astype(str).str.upper().str.contains("TAK", na=False)]
+                    completed_count = 0
+                    for i in range(0, total_files, batch_size):
+                        batch = docs_list[i:i + batch_size]
+                        status_text.text(f"Ekstrakcja wielowątkowa: pliki {i+1} do {min(i+batch_size, total_files)} z {total_files}...")
                         
-                        # TWARDY MATEMATYCZNY SUMARYCZNY WYNIK W PANDAS
-                        total_weight_kg = df_cbam_filtered["Masa_Netto_KG"].sum()
-                        total_weight_t = total_weight_kg / 1000.0
-                        is_above_de_minimis = "TAK" if total_weight_t > 50.0 else "NIE"
+                        # Przetwarzanie współbieżne (4 wątki dla maksymalnej prędkości)
+                        with ThreadPoolExecutor(max_workers=4) as executor:
+                            future_to_file = {executor.submit(process_single_file_fast, f): f for f in batch}
+                            for future in as_completed(future_to_file):
+                                completed_count += 1
+                                progress_bar.progress(completed_count / total_files)
+                                res_lines = future.result()
+                                if res_lines:
+                                    extracted_csv_lines.extend(res_lines)
 
-                        dzisiejsza_data = datetime.now().strftime("%d.%m.%Y")
-                        
-                        summary_prompt = (
-                            f"Jesteś głównym biegłym ds. celnych i CBAM dla firmy: {st.session_state.current_company}.\n"
-                            f"Oficjalna data sporządzenia raportu to: {dzisiejsza_data}.\n"
-                            f"OFICJALNE, TWARDYCH DANE WYZNACZONE MATEMATYCZNIE PRZEZ SKRYPT PYTHON:\n"
-                            f"- Łączna zsumowana masa netto towarów CBAM: {total_weight_kg:,.2f} kg ({total_weight_t:,.2f} ton)\n"
-                            f"- Przekroczenie progu de minimis (50 ton): {is_above_de_minimis}\n\n"
-                            f"Oto zestawienie pozycji:\n"
-                            f"{df_cbam_filtered.to_string(index=False)}\n\n"
-                            "Przygotuj profesjonalny raport w formacie Markdown zawierający powyższe wyliczone masy."
-                        )
+                    status_text.text("Matematyczne podsumowanie w Pandas...")
+                    
+                    csv_data_string = "\n".join(extracted_csv_lines)
+                    try:
+                        df_parsed = pd.read_csv(StringIO(csv_data_string), sep=";", on_bad_lines='skip')
+                    except Exception:
+                        df_parsed = pd.DataFrame(columns=["Nazwa_Produktu", "Kod_TARIC", "Masa_Netto_KG", "Czy_CBAM", "Kategoria_CBAM"])
 
-                        final_res = safe_generate_content(client, selected_model, [summary_prompt])
-                        st.session_state.cbam_indep_result = final_res.text
-                        
-                        status_text.empty()
-                        progress_bar.empty()
-                        st.success(f"✅ Sukces! Zsumowano masy netto matematycznie: **{total_weight_t:,.2f} ton**!")
-                    except Exception as e:
-                        st.error(f"Błąd podczas audytu: {str(e)}")
+                    if "Masa_Netto_KG" in df_parsed.columns:
+                        df_parsed["Masa_Netto_KG"] = df_parsed["Masa_Netto_KG"].astype(str).str.replace(" ", "").str.replace(",", ".").str.extract(r"(\d+\.?\d*)")[0].astype(float).fillna(0)
+                    else:
+                        df_parsed["Masa_Netto_KG"] = 0.0
 
-        if "cbam_indep_result" in st.session_state and st.session_state.cbam_indep_result:
-            st.markdown("---")
-            st.markdown(f"### 📋 Wynik Niezależnego Audytu CBAM dla Firmy: {st.session_state.current_company}")
-            st.markdown(st.session_state.cbam_indep_result)
-            st.markdown("---")
-            
-            col_d1, col_d2 = st.columns(2)
-            with col_d1:
-                if FPDF_AVAILABLE:
-                    cbam_indep_pdf_bytes = generate_cbam_pdf_report(st.session_state.current_company, st.session_state.cbam_indep_result)
-                    if cbam_indep_pdf_bytes:
-                        st.download_button("📄 Pobierz Raport CBAM (PDF)", data=cbam_indep_pdf_bytes, file_name=f"Raport_CBAM_Etap2_{st.session_state.current_company}.pdf", mime="application/pdf", use_container_width=True)
-            with col_d2:
-                st.download_button(
-                    "📥 Pobierz Pełny Raport (Format Markdown / Tekst)",
-                    data=st.session_state.cbam_indep_result.encode('utf-8'),
-                    file_name=f"Raport_CBAM_Etap2_{st.session_state.current_company}.md",
-                    mime="text/markdown",
-                    use_container_width=True
-                )
+                    if "Czy_CBAM" not in df_parsed.columns:
+                        df_parsed["Czy_CBAM"] = "TAK"
+
+                    df_cbam_filtered = df_parsed[df_parsed["Czy_CBAM"].astype(str).str.upper().str.contains("TAK", na=False)]
+                    
+                    # TWARDY WYNIK MATEMATYCZNY
+                    total_weight_kg = df_cbam_filtered["Masa_Netto_KG"].sum()
+                    total_weight_t = total_weight_kg / 1000.0
+                    is_above_de_minimis = "TAK" if total_weight_t > 50.0 else "NIE"
+
+                    dzisiejsza_data = datetime.now().strftime("%d.%m.%Y")
+                    
+                    summary_prompt = (
+                        f"Jesteś głównym biegłym ds. celnych dla firmy: {st.session_state.current_company}.\n"
+                        f"Data: {dzisiejsza_data}.\n"
+                        f"WYNIKI MATEMATYCZNE WYZNACZONE W PYTHONIE:\n"
+                        f"- Łączna masa netto towarów CBAM: {total_weight_kg:,.2f} kg ({total_weight_t:,.2f} ton)\n"
+                        f"- Przekroczenie progu de minimis (50 ton): {is_above_de_minimis}\n\n"
+                        f"Pozycje:\n{df_cbam_filtered.to_string(index=False)}\n\n"
+                        "Przygotuj profesjonalny raport ze zsumowanymi masami."
+                    )
+
+                    final_res = safe_generate_content(client, selected_model, [summary_prompt])
+                    st.session_state.cbam_indep_result = final_res.text
+                    
+                    status_text.empty()
+                    progress_bar.empty()
+                    st.success(f"✅ Szybki audyt zakończony! Łączna masa netto: **{total_weight_t:,.2f} ton**!")
+                except Exception as e:
+                    st.error(f"Błąd podczas szybkiego audytu: {str(e)}")
+
+    if "cbam_indep_result" in st.session_state and st.session_state.cbam_indep_result:
+        st.markdown("---")
+        st.markdown(f"### 📋 Raport Wag Netto CBAM dla: {st.session_state.current_company}")
+        st.markdown(st.session_state.cbam_indep_result)
+        st.markdown("---")
+        
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            if FPDF_AVAILABLE:
+                cbam_pdf_bytes = generate_cbam_pdf_report(st.session_state.current_company, st.session_state.cbam_indep_result)
+                if cbam_pdf_bytes:
+                    st.download_button("📄 Pobierz Oficjalny Raport PDF", data=cbam_pdf_bytes, file_name=f"Raport_CBAM_WagiNetto_{st.session_state.current_company}.pdf", mime="application/pdf", use_container_width=True)
+        with col_d2:
+            st.download_button(
+                "📥 Pobierz Raport (Markdown)",
+                data=st.session_state.cbam_indep_result.encode('utf-8'),
+                file_name=f"Raport_CBAM_WagiNetto_{st.session_state.current_company}.md",
+                mime="text/markdown",
+                use_container_width=True
+            )
 
 # ==============================================================================
 # MODUŁ 3: WIZUALNA BAZA KODÓW HS
