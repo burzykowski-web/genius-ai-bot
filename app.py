@@ -228,7 +228,7 @@ def process_excel_all_sheets_to_csv_rows(f_bytes, filename="plik.xls"):
     return all_rows if all_rows else [f"Dane z pliku {filename}"]
 
 def call_ai_chunked_stage2_massive(client, model_name, base_prompt, rows_list):
-    chunk_size = 100
+    chunk_size = 80
     chunks = [rows_list[i:i + chunk_size] for i in range(0, len(rows_list), chunk_size)]
     
     combined_csv_rows = []
@@ -239,18 +239,18 @@ def call_ai_chunked_stage2_massive(client, model_name, base_prompt, rows_list):
         chunk_text = "\n".join(chunk)
         chunk_prompt = (
             f"{base_prompt}\n"
-            f"ZASADA ZBIJANIA I SUMOWANIA POZYCJI:\n"
-            f"1. Ignoruj numery SKU – kluczem do złączenia wierszy jest WYŁĄCZNIE dokładnie ta sama Nazwa Produktu (przeznaczenie) oraz Skład Materiałowy.\n"
-            f"2. Zsumuj wszystkie identyczne pozycje: zsumuj ich Kartony (CTNS), Sztuki (Quantity), Masę Netto (NW_KGS), Masę Brutto (GW_KGS) oraz Wartość (Amount).\n"
-            f"3. Rozdziel czytelnie Nazwę Produktu od Składu Materiałowego i upewnij się, że liczby są poprawnie podsumowane.\n"
-            f"Zwróć wynik wyłącznie jako czysty format CSV ze średnikami (;) bez nagłówka w pierwszej linii."
+            f"BEZWZGLĘDNE WYMAGANIA DANYCH:\n"
+            f"1. Kolumny CTNS, Quantity, NW_KGS, GW_KGS, Amount MUSZĄ zawierać realne liczby (np. 1, 10, 50.5). NIGDY nie wpisuj słów 'None', 'N/D' ani pustych pól w te kolumny liczbowe! Jeśli brak danych, wpisz 1 dla ilości i kartonów oraz 0.0 dla mas i kwot.\n"
+            f"2. Zgrupuj i zsumuj towary wyłącznie po Nazwie Produktu i Składzie Materiałowym.\n"
+            f"Zwróć wyłącznie czysty format CSV ze średnikami (;) bez nagłówka w pierwszej linii."
         )
         try:
             res = safe_generate_content(client, model_name, [chunk_prompt, chunk_text])
             clean_res = res.text.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
             for r_line in clean_res.split('\n'):
                 if r_line.strip() and not r_line.upper().startswith("POS;"):
-                    combined_csv_rows.append(r_line)
+                    safe_line = r_line.replace(";None;", ";1;").replace(";none;", ";1;")
+                    combined_csv_rows.append(safe_line)
         except Exception:
             pass
             
@@ -358,11 +358,35 @@ st.sidebar.markdown(f"**🗄️ Baza Wizualna HS:** `{len(hs_db_sidebar)} wzorc�
 
 if app_mode == "🗄️ Wizualna Baza Kodów HS":
     st.title("🗄️ Wizualna Baza Wiedzy (Nazwa + Skład + Kod CN)")
-    st.caption("Przeglądaj, wyszukuj i zarządzaj wzorcami towarowymi zapamiętanymi przez system.")
+    st.caption("Przeglądaj, wyszukuj, pobieraj backup i zarządzaj wzorcami towarowymi zapamiętanymi przez system.")
 
     hs_db = load_hs_database()
     st.info(f"Aktualna liczba wzorców w bazie: **{len(hs_db)}**")
 
+    col_exp, col_imp = st.columns(2)
+    with col_exp:
+        from modul_baza_hs import export_hs_database_json, import_hs_database_from_json
+        json_bytes = export_hs_database_json()
+        st.download_button(
+            "📥 Pobierz kopię bazy na komputer (Backup JSON)",
+            data=json_bytes,
+            file_name=f"hs_database_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+            mime="application/json",
+            use_container_width=True
+        )
+    with col_imp:
+        uploaded_backup = st.file_uploader("📤 Wgraj plik bazy (Przywróć z kopii)", type=["json"], key="import_db_json")
+        if uploaded_backup is not None:
+            if st.button("Przywróć bazę z wgranego pliku", use_container_width=True):
+                success, res_msg = import_hs_database_from_json(uploaded_backup.getvalue())
+                if success:
+                    st.success(f"✅ Pomyślnie przywrócono bazę! Liczba wzorców: {res_msg}")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error(f"❌ Błąd importu: {res_msg}")
+
+    st.markdown("---")
     search_query = st.text_input("🔍 Szukaj w bazie (wpisz nazwę, skład lub kod CN):", "").strip().lower()
     st.markdown("---")
     
@@ -627,7 +651,6 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                             proposed_opt_trans = str(row.get("Opcjonalne Tłumaczenie", translate_text_google(f"{p_name} ({mat})"))).strip()
                             
                             matched_in_db = False
-                            # Dopasowanie w bazie po nazwie i składzie
                             if p_name and mat:
                                 db_key = f"{p_name.lower()}_{mat.lower()}"
                                 if db_key in current_db:
@@ -666,7 +689,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                             proj["hs_approved"] = records
                             save_container_data(cur_comp, cur_no, proj)
                             added = update_hs_database_from_records(records, upload_db_img, custom_status="Potwierdzony Celnie (Odprawiony)")
-                            st.success(f"✅ Zatwierdono! Zaktualizowano {added} wzorców w Bazie.")
+                            st.success(f"✅ Zatwierdzono! Zaktualizowano {added} wzorców w Bazie.")
                             st.rerun()
                     except Exception as e:
                         st.error(f"Błąd: {str(e)}")
