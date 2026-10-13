@@ -177,24 +177,38 @@ def translate_text_google(text):
         return text
 
 def process_excel_all_sheets_to_csv_rows(f_bytes, filename="plik.xls"):
+    """Ultra-odporna funkcja odczytująca pliki Excel (.xlsx / .xls) z uwzględnieniem wszystkich zakładek."""
     try:
         ext = filename.split(".")[-1].lower()
-        if ext == "xls":
+        xl = None
+        for engine in [None, 'openpyxl', 'xlrd', 'calamine']:
             try:
-                xl = pd.ExcelFile(BytesIO(f_bytes), engine='xlrd')
+                if engine:
+                    xl = pd.ExcelFile(BytesIO(f_bytes), engine=engine)
+                else:
+                    xl = pd.ExcelFile(BytesIO(f_bytes))
+                break
             except Exception:
-                xl = pd.ExcelFile(BytesIO(f_bytes))
-        else:
-            xl = pd.ExcelFile(BytesIO(f_bytes))
+                continue
+                
+        if not xl:
+            return [f"[Błąd: Nie można otworzyć pliku Excel {filename}]"]
             
         all_rows = []
         for sheet_name in xl.sheet_names:
-            df_sheet = xl.parse(sheet_name)
-            df_sheet = df_sheet.dropna(how='all')
-            for _, row in df_sheet.iterrows():
-                row_str = " | ".join([str(val) for val in row.values if pd.notna(val) and str(val).strip() != ""])
-                if row_str:
-                    all_rows.append(f"[Arkusz: {sheet_name}] {row_str}")
+            try:
+                df_sheet = xl.parse(sheet_name)
+                df_sheet = df_sheet.dropna(how='all')
+                # Dodanie nagłówków kolumn jako pierwszy wiersz arkusza
+                cols_str = " | ".join([str(c) for c in df_sheet.columns])
+                all_rows.append(f"[Arkusz: {sheet_name} - Nagłówki] {cols_str}")
+                
+                for _, row in df_sheet.iterrows():
+                    row_str = " | ".join([str(val) for val in row.values if pd.notna(val) and str(val).strip() != ""])
+                    if row_str:
+                        all_rows.append(f"[Arkusz: {sheet_name}] {row_str}")
+            except Exception:
+                continue
         return all_rows
     except Exception as e:
         return [f"[Błąd odczytu Excela: {str(e)}]"]
@@ -498,7 +512,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                                 all_excel_rows.extend(rows_extracted)
                         
                         if not all_excel_rows:
-                            st.error("⚠️ Nie znaleziono załączonego pliku Excel w dokumentach kontenera!")
+                            st.error("⚠️ Nie znaleziono załączonego pliku Excel w dokumentach kontenera! Upewnij się, że plik został poprawnie wgrany w sekcji u góry.")
                         else:
                             st.write(f"📂 Wczytano łącznie **{len(all_excel_rows)}** wierszy ze wszystkich zakładek Excel. Trwa masowe przetwarzanie AI...")
                             
