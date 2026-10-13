@@ -26,7 +26,8 @@ def clean_numeric_value(val):
 
 def process_stage_2_dataframe(csv_text):
     default_cols = ["pos", "Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE", "CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)", "Waluta"]
-    if not csv_text or not isinstance(csv_text, str):
+    
+    if not csv_text or not isinstance(csv_text, str) or not csv_text.strip():
         return pd.DataFrame(columns=default_cols)
     
     clean_lines = []
@@ -91,12 +92,13 @@ def process_stage_2_dataframe(csv_text):
         if col in df.columns:
             df[col] = df[col].apply(clean_numeric_value)
 
-    # Bezpieczne rzutowanie na stringi (zapobiega błędom 'DataFrame' object has no attribute 'str')
     for text_col in ["Nazwa Produktu", "Skład Materiałowy", "Invoice Positions", "HS CODE"]:
         if text_col in df.columns:
             df[text_col] = df[text_col].apply(lambda x: str(x) if not isinstance(x, pd.DataFrame) else "").fillna("").str.strip().str.upper()
 
     df = df[df["Nazwa Produktu"] != ""]
+    if df.empty:
+        return pd.DataFrame(columns=default_cols)
 
     agg_dict = {
         "CTNS": "sum",
@@ -113,6 +115,9 @@ def process_stage_2_dataframe(csv_text):
         df_grouped = df.groupby(["Nazwa Produktu", "Skład Materiałowy"], as_index=False).agg(agg_dict)
     except Exception:
         df_grouped = df.copy()
+
+    if df_grouped is None or df_grouped.empty:
+        return pd.DataFrame(columns=default_cols)
 
     for rc in default_cols:
         if rc not in df_grouped.columns and rc != "pos":
