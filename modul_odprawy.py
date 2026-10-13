@@ -29,15 +29,15 @@ def process_stage_2_dataframe(csv_text):
     if not csv_text or not isinstance(csv_text, str):
         return pd.DataFrame(columns=default_cols)
     
+    # Czyszczenie linii i usuwanie powtarzających się nagłówków z paczek AI
     clean_lines = []
     for line in csv_text.split('\n'):
         line_s = line.strip()
         if not line_s:
             continue
         upper_l = line_s.upper()
-        if "CATALOG_NO" in upper_l or "PRODUCT_NAME" in upper_l or upper_l.startswith("POS;CATALOG"):
-            if "PRODUCT_NAME" in line_s and "Material" in line_s:
-                continue
+        if "CATALOG_NO" in upper_l or "PRODUCT_NAME" in upper_l or upper_l.startswith("POS;"):
+            continue
         clean_lines.append(line_s)
         
     final_csv_str = "\n".join(clean_lines)
@@ -52,20 +52,25 @@ def process_stage_2_dataframe(csv_text):
         except Exception:
             return pd.DataFrame(columns=default_cols)
             
+    # Jeśli DataFrame nie ma sensownych kolumn, przerywamy
+    if df.empty or len(df.columns) < 2:
+        return pd.DataFrame(columns=default_cols)
+
+    # Standardowe mapowanie kolumn niezależnie od tego, jak nazwał je model
     col_map = {}
     for c in df.columns:
-        c_low = c.strip().lower()
-        if "catalog" in c_low or "sku" in c_low or "artikel" in c_low or "positions" in c_low or "art" in c_low:
+        c_low = str(c).strip().lower()
+        if "catalog" in c_low or "sku" in c_low or "artikel" in c_low or "positions" in c_low or "art" in c_low or c_low == "invoice positions":
             col_map[c] = "Invoice Positions"
         elif "name" in c_low or "produkt" in c_low or "towar" in c_low or "desc" in c_low:
             col_map[c] = "Nazwa Produktu"
-        elif "material" in c_low or "skład" in c_low:
+        elif "material" in c_low or "skład" in c_low or "sklad" in c_low:
             col_map[c] = "Skład Materiałowy"
         elif "hs" in c_low or "taric" in c_low or "cn" in c_low or "code" in c_low:
             col_map[c] = "HS CODE"
         elif "ctns" in c_low or "karton" in c_low:
             col_map[c] = "CTNS"
-        elif "quant" in c_low or "szt" in c_low or "pcs" in c_low:
+        elif "quant" in c_low or "szt" in c_low or "pcs" in c_low or "quantity" in c_low:
             col_map[c] = "Quantity (pcs.)"
         elif "nw" in c_low or "netto" in c_low:
             col_map[c] = "N.W KGS"
@@ -85,14 +90,20 @@ def process_stage_2_dataframe(csv_text):
     if "Waluta" not in df.columns:
         df["Waluta"] = "EUR"
         
+    # Konwersja kolumn numerycznych
     for col in ["CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"]:
         if col in df.columns:
             df[col] = df[col].apply(clean_numeric_value)
 
+    # Czyszczenie kluczy tekstowych
     df["Nazwa Produktu"] = df["Nazwa Produktu"].fillna("").astype(str).str.strip().str.upper()
     df["Skład Materiałowy"] = df["Skład Materiałowy"].fillna("").astype(str).str.strip().str.upper()
     df["Invoice Positions"] = df["Invoice Positions"].fillna("").astype(str).str.strip()
 
+    # Odrzucamy wiersze bez nazwy produktu, żeby nie tworzyć śmieciowych wpisów
+    df = df[df["Nazwa Produktu"] != ""]
+
+    # Słownik agregacji do grupowania wyłącznie po Nazwie i Składzie Materiałowym
     agg_dict = {
         "CTNS": "sum",
         "Quantity (pcs.)": "sum",
@@ -113,6 +124,7 @@ def process_stage_2_dataframe(csv_text):
         if rc not in df_grouped.columns and rc != "pos":
             df_grouped[rc] = 0.0 if rc in ["CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"] else ""
     
+    # Układ kolumn zgodny z aplikacją
     df_grouped = df_grouped[["Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE", "CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)", "Waluta"]]
     df_grouped.insert(0, "pos", range(1, len(df_grouped) + 1))
     
