@@ -80,7 +80,7 @@ def load_companies_and_containers():
                 cont_dir = os.path.join(comp_dir, container_no)
                 if os.path.isdir(cont_dir):
                     json_path = os.path.join(cont_dir, "data.json")
-                    c_data = {"out1": "", "out2": "", "out3": "", "calc_audit": "", "docs": [], "hs_approved": [], "cbam_data": "", "cbam_audit_result": "", "cross_check_sku_result": "", "cross_check_df": []}
+                    c_data = {"out1": "", "out2": "", "out3": "", "calc_audit": "", "docs": [], "hs_approved": [], "cross_check_df": []}
                     if os.path.exists(json_path):
                         try:
                             with open(json_path, "r", encoding="utf-8") as f:
@@ -108,8 +108,6 @@ def save_container_data(company_name, container_no, data):
         "out3": data.get("out3", ""),
         "calc_audit": data.get("calc_audit", ""),
         "hs_approved": data.get("hs_approved", []),
-        "cbam_data": data.get("cbam_data", ""),
-        "cbam_audit_result": data.get("cbam_audit_result", ""),
         "cross_check_sku_result": data.get("cross_check_sku_result", ""),
         "cross_check_df": data.get("cross_check_df", [])
     }
@@ -150,33 +148,6 @@ def save_uploaded_files(company_name, container_no, uploaded_files):
         except Exception as e:
             st.error(f"Błąd zapisu pliku {f.name}: {str(e)}")
     return saved_docs
-
-def delete_container_dir(company_name, container_no):
-    import shutil
-    cont_dir = os.path.join(DATA_DIR, company_name, container_no)
-    if os.path.exists(cont_dir):
-        shutil.rmtree(cont_dir)
-
-def safe_generate_content(client, model_name, contents, max_retries=3, initial_delay=2):
-    for attempt in range(max_retries):
-        try:
-            return client.models.generate_content(model=model_name, contents=contents)
-        except Exception as e:
-            err_str = str(e)
-            if "503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str.lower():
-                if attempt < max_retries - 1:
-                    time.sleep(initial_delay * (attempt + 1))
-                    continue
-            raise e
-
-def translate_text_google(text):
-    if not text or not TRANSLATOR_AVAILABLE:
-        return text
-    try:
-        translated = GoogleTranslator(source='auto', target='pl').translate(str(text))
-        return translated if translated else text
-    except Exception:
-        return text
 
 def process_excel_all_sheets(f_bytes, filename="plik.xls"):
     try:
@@ -418,7 +389,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                                 analysis_contents.append(types.Part.from_bytes(data=c_bytes, mime_type="image/jpeg"))
 
                         with st.spinner("Przetwarzanie weryfikacji krzyżowej i ekstrakcja SKU..."):
-                            res_cross = safe_generate_content(client, selected_model, analysis_contents)
+                            res_cross = genai.Client(api_key=api_key).models.generate_content(model=selected_model, contents=analysis_contents)
                             raw_text = res_cross.text.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
                             
                             from io import StringIO
