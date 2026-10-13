@@ -4,7 +4,6 @@ import json
 import time
 import zipfile
 from io import BytesIO
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 import pandas as pd
 import streamlit as st
@@ -177,7 +176,7 @@ def translate_text_google(text):
         return text
 
 def process_excel_all_sheets_to_csv_rows(f_bytes, filename="plik.xls"):
-    """Ultra-odporna funkcja odczytująca pliki Excel (.xlsx / .xls) z uwzględnieniem wszystkich zakładek."""
+    """Niezawodny ekstraktor wierszy z każdego pliku Excel (uwzględnia wszystkie arkusze bez pomijania kolumn)."""
     try:
         ext = filename.split(".")[-1].lower()
         xl = None
@@ -197,12 +196,8 @@ def process_excel_all_sheets_to_csv_rows(f_bytes, filename="plik.xls"):
         all_rows = []
         for sheet_name in xl.sheet_names:
             try:
-                df_sheet = xl.parse(sheet_name)
+                df_sheet = xl.parse(sheet_name, header=None) # Wczytaj bez domyślnego nagłówka, aby złapać absolutnie wszystko
                 df_sheet = df_sheet.dropna(how='all')
-                # Dodanie nagłówków kolumn jako pierwszy wiersz arkusza
-                cols_str = " | ".join([str(c) for c in df_sheet.columns])
-                all_rows.append(f"[Arkusz: {sheet_name} - Nagłówki] {cols_str}")
-                
                 for _, row in df_sheet.iterrows():
                     row_str = " | ".join([str(val) for val in row.values if pd.notna(val) and str(val).strip() != ""])
                     if row_str:
@@ -214,7 +209,7 @@ def process_excel_all_sheets_to_csv_rows(f_bytes, filename="plik.xls"):
         return [f"[Błąd odczytu Excela: {str(e)}]"]
 
 def call_ai_chunked_stage2_massive(client, model_name, base_prompt, rows_list):
-    chunk_size = 100
+    chunk_size = 150 # Paczki po 150 wierszy dla idealnej precyzji modeli
     chunks = [rows_list[i:i + chunk_size] for i in range(0, len(rows_list), chunk_size)]
     
     combined_csv_rows = []
@@ -495,7 +490,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
 
         elif selected_tab == "🧩 2. Zbijanie Pozycji (2000+ Excel)":
             st.subheader("🧩 Masowa Agregacja Pozycji (Wsparcie dla Plików 2000+ wierszy)")
-            st.info("System przeczyta wszystkie zakładki wgranego pliku Excel rzędami, rozdzieli nazwy od materiałów i wyciągnie numery SKU.")
+            st.info("System wczyta każdą komórkę i zakładkę pliku Excel, rozdzieli nazwy od materiałów i zsumuje pozycje po SKU.")
 
             if st.button("🚀 Uruchom Masowe Zbijanie Pozycji (Excel 2000+ wierszy)", key="b2_massive", type="primary", use_container_width=True):
                 if not proj.get("docs"):
@@ -512,13 +507,13 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                                 all_excel_rows.extend(rows_extracted)
                         
                         if not all_excel_rows:
-                            st.error("⚠️ Nie znaleziono załączonego pliku Excel w dokumentach kontenera! Upewnij się, że plik został poprawnie wgrany w sekcji u góry.")
+                            st.error("⚠️ Nie znaleziono załączonego pliku Excel w dokumentach kontenera! Wgraj plik w sekcji u góry.")
                         else:
-                            st.write(f"📂 Wczytano łącznie **{len(all_excel_rows)}** wierszy ze wszystkich zakładek Excel. Trwa masowe przetwarzanie AI...")
+                            st.write(f"📂 Wczytano łącznie **{len(all_excel_rows)}** wierszy tekstowych ze wszystkich zakładek Excel. Trwa masowe przetwarzanie AI...")
                             
                             p2 = (
-                                "Jesteś precyzyjnym systemem OCR i celnym.\n"
-                                "Przeanalizuj poniższe wiersze z pliku Excel.\n"
+                                "Jesteś precyzyjnym systemem celnym i OCR.\n"
+                                "Przeanalizuj poniższe wiersze źródłowe wyciągnięte z pliku Excel.\n"
                                 "Wyciągnij KAŻDĄ pozycję towarową, starannie rozdzielając Nazwę Produktu od Składu Materiałowego oraz Numer Katalogowy (SKU / Artikel-Nr).\n"
                                 "Zwróć wynik jako czysty kod CSV ze średnikami (;) bez nagłówka w pierwszej linii:\n"
                                 "POS;Catalog_No;Product_Name;Material;HS_CODE;CTNS;Quantity;NW_KGS;GW_KGS;Amount;Waluta"
