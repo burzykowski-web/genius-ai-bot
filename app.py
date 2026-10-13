@@ -80,7 +80,7 @@ def load_companies_and_containers():
                 cont_dir = os.path.join(comp_dir, container_no)
                 if os.path.isdir(cont_dir):
                     json_path = os.path.join(cont_dir, "data.json")
-                    c_data = {"out1": "", "out2": "", "out3": "", "calc_audit": "", "docs": [], "hs_approved": [], "cbam_data": "", "cbam_audit_result": "", "cross_check_sku_result": ""}
+                    c_data = {"out1": "", "out2": "", "out3": "", "calc_audit": "", "docs": [], "hs_approved": [], "cbam_data": "", "cbam_audit_result": "", "cross_check_sku_result": "", "cross_check_df": []}
                     if os.path.exists(json_path):
                         try:
                             with open(json_path, "r", encoding="utf-8") as f:
@@ -110,7 +110,8 @@ def save_container_data(company_name, container_no, data):
         "hs_approved": data.get("hs_approved", []),
         "cbam_data": data.get("cbam_data", ""),
         "cbam_audit_result": data.get("cbam_audit_result", ""),
-        "cross_check_sku_result": data.get("cross_check_sku_result", "")
+        "cross_check_sku_result": data.get("cross_check_sku_result", ""),
+        "cross_check_df": data.get("cross_check_df", [])
     }
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(save_data, f, ensure_ascii=False, indent=2)
@@ -821,7 +822,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
             if new_no:
                 if new_no not in st.session_state.company_data[st.session_state.current_company]:
                     st.session_state.company_data[st.session_state.current_company][new_no] = {
-                        "docs": [], "out1": "", "out2": "", "out3": "", "calc_audit": "", "hs_approved": [], "cbam_data": "", "cbam_audit_result": "", "cross_check_sku_result": ""
+                        "docs": [], "out1": "", "out2": "", "out3": "", "calc_audit": "", "hs_approved": [], "cbam_data": "", "cbam_audit_result": "", "cross_check_sku_result": "", "cross_check_df": []
                     }
                     save_container_data(st.session_state.current_company, new_no, st.session_state.company_data[st.session_state.current_company][new_no])
                 st.session_state.current_container = new_no
@@ -1080,14 +1081,9 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                         client = genai.Client(api_key=api_key)
                         analysis_contents = [
                             "Jesteś ekspertem celnym i systemem OCR. Przeanalizuj wgrane dokumenty: niemieckie odprawy celne oraz dokumenty handlowe (CI/PL).\n"
-                            "Zadanie: Wyciągnij pozycje towarowe, łącząc je w pary na podstawie Numeru Katalogowego (SKU / Artikel-Nr) oraz nazwy.\n"
-                            "Dla każdej pozycji wyciągnij:\n"
-                            "- Numer Katalogowy (SKU / Artikel-Nr)\n"
-                            "- Nazwa Produktu\n"
-                            "- Skład Materiałowy\n"
-                            "- Ostateczny Kod CN / TARIC z niemieckiej odprawy\n"
-                            "- Masa Netto (kg)\n"
-                            "Zwróć wynik w przejrzystej tabeli Markdown oraz jako czysty kod CSV ze średnikami (;) na końcu w bloku kodu."
+                            "Zadanie: Wyciągnij pozycje towarowe, łącząc je w pary na podstawie Numeru Katalogowego (SKU / Artikel-Nr / ART NO.) oraz nazwy.\n"
+                            "Zwróć wynik WYŁĄCZNIE jako czysty kod CSV ze średnikami (;) w pierwszej linii bez dodatkowego markdown:\n"
+                            "Numer_Katalogowy;Nazwa_Produktu;Sklad_Materialowy;Ostateczny_Kod_TARIC;Masa_Netto_KG"
                         ]
                         
                         if uploaded_german_zoll:
@@ -1118,8 +1114,16 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                                 elif c_ext == "png":
                                     analysis_contents.append(types.Part.from_bytes(data=c_bytes, mime_type="application/png"))
 
-                        with st.spinner("Przetwarzanie weryfikacji krzyżowej wielu plików i ekstrakcja SKU..."):
+                        with st.spinner("Przetwarzanie weryfikacji krzyżowej i ekstrakcja pozycji SKU..."):
                             res_cross = safe_generate_content(client, selected_model, analysis_contents)
+                            clean_csv = res_cross.text.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
+                            
+                            from io import StringIO
+                            valid_csv_lines = [l for l in clean_csv.split('\n') if l.count(';') >= 3 or "Numer_Katalogowy" in l]
+                            if valid_csv_lines:
+                                df_cross = pd.read_csv(StringIO("\n".join(valid_csv_lines)), sep=";", on_bad_lines='skip')
+                                proj["cross_check_df"] = df_cross.to_dict(orient="records")
+                            
                             proj["cross_check_sku_result"] = res_cross.text
                             save_container_data(cur_comp, cur_no, proj)
                             st.success("✅ Weryfikacja krzyżowa zakończona pomyślnie!")
@@ -1128,9 +1132,35 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                     except Exception as e:
                         st.error(f"Błąd podczas weryfikacji: {str(e)}")
 
-            if proj.get("cross_check_sku_result"):
+            if proj.get("cross_check_df"):
                 st.markdown("---")
-                st.markdown("### 📋 Wyniki Dopasowania Numerów Katalogowych (SKU)")
+                st.markdown("### 📋 Edytowalna Tabela Dopasowania SKU z Odprawy")
+                st.info("Możesz edytować kody i opisy poniżej, a następnie jednym przyciskiem zapisać całą partię do Wizualnej Bazy HS.")
+                
+                df_cross_editable = pd.DataFrame(proj["cross_check_df"])
+                edited_cross_df = st.data_editor(df_cross_editable, use_container_width=True, hide_index=True, num_rows="dynamic", key="cross_editor")
+                
+                upload_sku_img = st.file_uploader("📷 Wgraj zdjęcie referencyjne do bazy dla tych SKU (opcjonalnie)", type=["jpg", "jpeg", "png"], key="sku_img_upload")
+
+                if st.button("💾 Zapisz Zweryfikowane SKU bezpośrednio do Bazy HS", type="primary", use_container_width=True):
+                    # Przygotowanie rekordów pod format bazy
+                    records_to_save = []
+                    for _, r in edited_cross_df.iterrows():
+                        records_to_save.append({
+                            "Numer Katalogowy": str(r.get("Numer_Katalogowy", r.get("Numer Katalogowy", ""))),
+                            "Nazwa Produktu": str(r.get("Nazwa_Produktu", r.get("Nazwa Produktu", ""))),
+                            "Skład Materiałowy": str(r.get("Sklad_Materialowy", r.get("Skład Materiałowy", ""))),
+                            "Ostateczny Kod TARIC": str(r.get("Ostateczny_Kod_TARIC", r.get("Ostateczny Kod TARIC", ""))),
+                            "Oficjalny Opis CN": "",
+                            "Opcjonalne Tłumaczenie": translate_text_google(f"{r.get('Nazwa_Produktu', '')} ({r.get('Sklad_Materialowy', '')})"),
+                            "Status Celny": "Potwierdzony Celnie (Odprawiony)"
+                        })
+                    
+                    added_cnt = update_hs_database_from_records(records_to_save, upload_sku_img, custom_status="Potwierdzony Celnie (Odprawiony)")
+                    st.success(f"🎉 Pomyślnie zapisano i zaktualizowano **{added_cnt}** wzorców w Wizualnej Bazie HS po numerach katalogowych (SKU)!")
+
+            elif proj.get("cross_check_sku_result"):
+                st.markdown("---")
                 st.markdown(proj["cross_check_sku_result"])
 
         elif selected_tab == "🏷️ 3. Taryfikacja & Weryfikacja Agenta":
