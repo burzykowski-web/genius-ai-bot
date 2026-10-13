@@ -1,6 +1,30 @@
 # -*- coding: utf-8 -*-
 import pandas as pd
+import re
 from io import StringIO
+
+def clean_numeric_value(val):
+    """Bezpiecznie konwertuje dowolny format liczbowy (w tym europejski z przecinkami/kropkami) na float."""
+    if pd.isna(val):
+        return 0.0
+    s = str(val).strip()
+    if not s or s.lower() in ["nan", "none", "n/d", ""]:
+        return 0.0
+    
+    # Obsługa formatów z kropkami i przecinkami (np. 1.380,15 lub 407,15)
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif "," in s:
+        s = s.replace(",", ".")
+        
+    s_clean = re.sub(r'[^\d.-]', '', s)
+    try:
+        return float(s_clean)
+    except ValueError:
+        return 0.0
 
 def process_stage_2_dataframe(csv_text):
     if not csv_text or not isinstance(csv_text, str):
@@ -60,20 +84,20 @@ def process_stage_2_dataframe(csv_text):
     req_cols = ["Invoice Positions", "Nazwa Produktu", "Skład Materiałowy", "HS CODE", "CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"]
     for rc in req_cols:
         if rc not in df.columns:
-            df[rc] = 0 if "KGS" in rc or rc in ["CTNS", "Quantity (pcs.)", "Amount (EUR)"] else ""
+            df[rc] = 0.0 if "KGS" in rc or rc in ["CTNS", "Quantity (pcs.)", "Amount (EUR)"] else ""
             
     if "Waluta" not in df.columns:
         df["Waluta"] = "EUR"
         
-    # Konwersja kolumn numerycznych
+    # Konwersja kolumn numerycznych za pomocą poprawionej funkcji
     for col in ["CTNS", "Quantity (pcs.)", "N.W KGS", "G.W KGS", "Amount (EUR)"]:
-        df[col] = pd.to_numeric(df[col].astype(str).str.replace(",", ".").str.replace(r"[^\d.-]", "", regex=True), errors='coerce').fillna(0)
+        df[col] = df[col].apply(clean_numeric_value)
 
     # Standaryzacja kluczy grupowania (Nazwa + Skład)
     df["Nazwa Produktu"] = df["Nazwa Produktu"].fillna("").astype(str).str.strip().str.upper()
     df["Skład Materiałowy"] = df["Skład Materiałowy"].fillna("").astype(str).str.strip().str.upper()
 
-    # Agregacja i sumowanie WYŁĄCZNIE po Nazwie i Składzie Materiałowym
+    # Agregacja i sumowanie po Nazwie i Składzie Materiałowym
     agg_dict = {
         "CTNS": "sum",
         "Quantity (pcs.)": "sum",
