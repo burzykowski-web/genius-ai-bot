@@ -228,7 +228,7 @@ def process_excel_all_sheets_to_csv_rows(f_bytes, filename="plik.xls"):
     return all_rows if all_rows else [f"Dane z pliku {filename}"]
 
 def call_ai_chunked_stage2_massive(client, model_name, base_prompt, rows_list):
-    chunk_size = 80
+    chunk_size = 150
     chunks = [rows_list[i:i + chunk_size] for i in range(0, len(rows_list), chunk_size)]
     
     combined_csv_rows = []
@@ -239,18 +239,14 @@ def call_ai_chunked_stage2_massive(client, model_name, base_prompt, rows_list):
         chunk_text = "\n".join(chunk)
         chunk_prompt = (
             f"{base_prompt}\n"
-            f"BEZWZGLĘDNE WYMAGANIA DANYCH:\n"
-            f"1. Kolumny CTNS, Quantity, NW_KGS, GW_KGS, Amount MUSZĄ zawierać realne liczby (np. 1, 10, 50.5). NIGDY nie wpisuj słów 'None', 'N/D' ani pustych pól w te kolumny liczbowe! Jeśli brak danych, wpisz 1 dla ilości i kartonów oraz 0.0 dla mas i kwot.\n"
-            f"2. Zgrupuj i zsumuj towary wyłącznie po Nazwie Produktu i Składzie Materiałowym.\n"
-            f"Zwróć wyłącznie czysty format CSV ze średnikami (;) bez nagłówka w pierwszej linii."
+            f"(Paczka {idx+1} z {len(chunks)}. Zwróć wynik jako format CSV ze średnikami bez nagłówka)."
         )
         try:
             res = safe_generate_content(client, model_name, [chunk_prompt, chunk_text])
             clean_res = res.text.replace("```csv", "").replace("```markdown", "").replace("```", "").strip()
             for r_line in clean_res.split('\n'):
                 if r_line.strip() and not r_line.upper().startswith("POS;"):
-                    safe_line = r_line.replace(";None;", ";1;").replace(";none;", ";1;")
-                    combined_csv_rows.append(safe_line)
+                    combined_csv_rows.append(r_line)
         except Exception:
             pass
             
@@ -575,7 +571,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                             p2 = (
                                 "Jesteś precyzyjnym systemem celnym i OCR.\n"
                                 "Przeanalizuj poniższe wiersze źródłowe wyciągnięte z pliku Excel.\n"
-                                "Wyciągnij KAŻDĄ pozycję towarową, starannie rozdzielając Nazwę Produktu (przeznaczenie) od Składu Materiałowego.\n"
+                                "Wyciągnij KAŻDĄ pozycję towarową, starannie rozdzielając Nazwę Produktu (przeznaczenie) od Składu Materiałowego oraz zsumuj ilości i masy.\n"
                                 "Zwróć wynik jako czysty kod CSV ze średnikami (;) bez nagłówka w pierwszej linii:\n"
                                 "POS;Catalog_No;Product_Name;Material;HS_CODE;CTNS;Quantity;NW_KGS;GW_KGS;Amount;Waluta"
                             )
@@ -689,7 +685,7 @@ elif app_mode == "🚢 Odprawy i Taryfikacja Kontenerów":
                             proj["hs_approved"] = records
                             save_container_data(cur_comp, cur_no, proj)
                             added = update_hs_database_from_records(records, upload_db_img, custom_status="Potwierdzony Celnie (Odprawiony)")
-                            st.success(f"✅ Zatwierdzono! Zaktualizowano {added} wzorców w Bazie.")
+                            st.success(f"✅ Zatwierdono! Zaktualizowano {added} wzorców w Bazie.")
                             st.rerun()
                     except Exception as e:
                         st.error(f"Błąd: {str(e)}")
